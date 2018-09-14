@@ -10,7 +10,8 @@ sudo yum -y install \
     rake \
     bison \
     openssl-devel \
-    make
+    make \
+    unzip
 
 sudo yum install -y epel-release
 wget http://rpms.famillecollet.com/enterprise/remi-release-7.rpm
