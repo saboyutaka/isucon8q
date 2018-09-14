@@ -15,11 +15,8 @@ attach: ## Attach running web container for binding.pry
 bundle: ## Run Bundle install
 	docker-compose run --rm web bundle install
 
-_download_dbdump: ## Download db.dump.tgz from Dropbox
-	@if ! [ -f db/db.dump ];then curl -L -O -J 'https://www.dropbox.com/s/pbkxpnd2av9pjd7/db.dump?dl=0' && mv db.dump db; fi
-
 myprofiler: ## Run myprofiler
-	myprofiler -user=ishocon -password=ishocon
+	docker-compose run --rm myprofiler
 
 alp: ## Run alp
 	 docker-compose run --rm alp -f access.log --sum -r --aggregates='/candidates/\d+, /political_parties/\w+' --include-statuses='2[00-99]'
@@ -30,8 +27,6 @@ alp: ## Run alp
 mitmweb: ## Run mitmweb
 	mitmweb --mode reverse:http://localhost:8888/ -p 80
 	mitmdump -n -C flows.dms
-
-replay: ## Run mitmdump
 
 db-reset: _download_dbdump ## Reset DB
 	docker-compose up -d db
