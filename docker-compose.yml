@@ -18,7 +18,7 @@ services:
     environment:
       ISUBATA_DB_HOST: db
   nginx:
-    image: saboyutaka/ngx-mruby:2.1.1
+    image: saboyutaka/ngx-mruby:2.1.2
     ports:
       - 8080:80
     volumes:
