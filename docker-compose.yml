@@ -46,6 +46,15 @@ services:
     command: ["-host=db", "-user=root"]
     depends_on:
       - db
+  goose:
+    build:
+      context: docker/goose
+    volumes:
+      - .:/go/src/github.com/saboyutaka/isucon8q
+    environment:
+      DATABASE_URL: tcp:db:3306*isucon/root/
+    depends_on:
+      - db
 volumes:
   mysql-volume:
   bundle-volume:

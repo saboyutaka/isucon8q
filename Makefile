@@ -24,6 +24,15 @@ alp: ## Run alp
 	 docker-compose run --rm alp -f access.log --sum -r --aggregates='/candidates/\d+, /political_parties/\w+' --include-statuses='4[00-99]'
 	 docker-compose run --rm alp -f access.log --sum -r --aggregates='/candidates/\d+, /political_parties/\w+' --include-statuses='5[00-99]'
 
+goose-up: ## Run goose up
+	docker-compose run --rm goose up
+
+goose-down: ## Run goose down
+	docker-compose run --rm goose down
+
+goose-status: ## Run goose status
+	docker-compose run --rm goose status
+
 mitmweb: ## Run mitmweb
 	mitmweb --mode reverse:http://localhost:8888/ -p 80
 	mitmdump -n -C flows.dms
