@@ -43,11 +43,13 @@ db-reset: ## Reset DB
 	docker-compose exec db sh /var/tmp/init.sh
 
 ## 本番用
+stop-ruby: ## update ruby
+	sudo systemctl stop torb.ruby
 
 update-ruby: ## update ruby
 	sudo cp /home/isucon/torb/webapp/config/systemd/torb.ruby.service /etc/systemd/system/torb.ruby.service
 	sudo systemctl daemon-reload
-	cd  /home/isucon/torb/webapp/ruby; /home/isucon/local/ruby/bin/bundle install
+	cd  /home/isucon/torb/webapp/ruby; /home/isucon/local/ruby/bin/bundle install --path=vendor/bundle
 	sudo systemctl restart torb.ruby
 
 update-db: ## update mysql
