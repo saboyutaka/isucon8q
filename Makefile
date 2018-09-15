@@ -60,7 +60,11 @@ update-db: ## update mysql
 
 update-nginx: ## update nginx
 	sudo cp /home/isucon/torb/webapp/config/nginx/nginx.conf.prod /etc/nginx/nginx.conf
+	sudo rm /var/log/nginx/access.log
 	sudo systemctl restart nginx
+
+tail: ## tail nginx access.log
+	sudo tail -f /var/log/nginx/access.log
 
 alpp: ## Run alp on production
 	sudo alp -f /var/log/nginx/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='2[00-99]'
