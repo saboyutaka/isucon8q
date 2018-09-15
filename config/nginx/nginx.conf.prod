@@ -70,7 +70,7 @@ http {
     # ssl_certificate_key /etc/nginx/ssl/server.key;
 
     listen       80;
-    root /home/isucon/torb/webapp/public;
+    root /home/isucon/torb/webapp/ruby/public;
 
     client_max_body_size 10m;
 
@@ -88,25 +88,19 @@ http {
     location /js/ {
       # access_log off;
       # expires 1d;
-      # add_header Cache-Control "public, max-age=31536000";
+      add_header Cache-Control "public, max-age=31536000";
     }
 
     location /css/ {
       # access_log off;
       # expires 1d;
-      # add_header Cache-Control "public, max-age=31536000";
-
-    }
-
-    location /image/ {
-      # expires 1d;
-      # add_header Cache-Control "public, max-age=31536000";
-      try_files $uri @app;
+      add_header Cache-Control "public, max-age=31536000";
     }
 
     location = /favicon.ico {
       #access_log off;
       #expires 1d;
+      add_header Cache-Control "public, max-age=31536000";
     }
 
     location @app {
