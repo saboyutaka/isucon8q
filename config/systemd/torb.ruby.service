@@ -5,7 +5,7 @@ Description = isucon8 qualifier webapp in ruby
 WorkingDirectory=/home/isucon/torb/webapp/ruby
 EnvironmentFile=/home/isucon/torb/webapp/env.sh
 
-ExecStart = /home/isucon/local/ruby/bin/bundle exec puma -p 8080 -b "tcp://0.0.0.0" -w 2
+ExecStart = /home/isucon/local/ruby/bin/bundle exec puma -p 8080 -b "tcp://0.0.0.0"
 Restart   = always
 Type      = simple
 User      = isucon
