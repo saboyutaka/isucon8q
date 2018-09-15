@@ -58,6 +58,10 @@ update-db: ## update mysql
 	sudo cp /home/isucon/torb/webapp/config/mysql/my.cnf /etc/my.cnf
 	sudo systemctl restart mysqld
 
+update-redis: ## update redis
+	sudo cp /home/isucon/torb/webapp/config/redis/redis.conf /etc/redis.conf
+	sudo systemctl restart redis
+
 update-nginx: ## update nginx
 	sudo cp /home/isucon/torb/webapp/config/nginx/nginx.conf.prod /etc/nginx/nginx.conf
 	sudo rm /var/log/nginx/access.log
