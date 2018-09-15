@@ -16,7 +16,9 @@ services:
     tty: true
     stdin_open: true
     environment:
-      ISUBATA_DB_HOST: db
+      DB_HOST: db
+      DB_USER: root
+      DB_DATABASE: torb
   nginx:
     image: saboyutaka/ngx-mruby:2.1.2
     ports:
