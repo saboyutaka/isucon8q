@@ -46,6 +46,8 @@ db-reset: ## Reset DB
 stop-ruby: ## update ruby
 	sudo systemctl stop torb.ruby
 
+update: update-ruby update-db update-nginx ## updat all
+
 update-ruby: ## update ruby
 	sudo cp /home/isucon/torb/webapp/config/systemd/torb.ruby.service /etc/systemd/system/torb.ruby.service
 	sudo systemctl daemon-reload
@@ -55,6 +57,10 @@ update-ruby: ## update ruby
 update-db: ## update mysql
 	sudo cp /home/isucon/torb/webapp/config/mysql/my.cnf /etc/my.cnf
 	sudo systemctl restart mysqld
+
+update-nginx: ## update nginx
+	sudo cp /home/isucon/torb/webapp/config/nginx/nginx.conf.prod /etc/nginx/nginx.conf
+	sudo systemctl restart nginx
 
 .PHONY: help
 help:
