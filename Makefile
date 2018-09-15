@@ -62,6 +62,10 @@ update-redis: ## update redis
 	sudo cp /home/isucon/torb/webapp/config/redis/redis.conf /etc/redis.conf
 	sudo systemctl restart redis
 
+update-h2o: ## update h2o
+	sudo cp /home/isucon/torb/webapp/config/h2o/h2o.conf /etc/h2o/h2o.conf
+	sudo systemctl restart h2o
+
 update-nginx: ## update nginx
 	sudo cp /home/isucon/torb/webapp/config/nginx/nginx.conf.prod /etc/nginx/nginx.conf
 	sudo rm /var/log/nginx/access.log
