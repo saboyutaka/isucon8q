@@ -50,6 +50,10 @@ update-ruby: ## update ruby
 	cd  /home/isucon/torb/webapp/ruby; /home/isucon/local/ruby/bin/bundle install
 	sudo systemctl restart torb.ruby
 
+update-db: ## update mysql
+	sudo cp /home/isucon/torb/webapp/config/mysql/my.cnf /etc/my.cnf
+	sudo systemctl restart mysqld
+
 .PHONY: help
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
