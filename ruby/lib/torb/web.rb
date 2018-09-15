@@ -528,6 +528,7 @@ module Torb
     end
 
     post '/admin/api/events/:id/actions/edit', admin_login_required: true do |event_id|
+      event_id = event_id.to_i
       public = body_params['public'] || false
       closed = body_params['closed'] || false
       public = false if closed
