@@ -62,6 +62,12 @@ update-nginx: ## update nginx
 	sudo cp /home/isucon/torb/webapp/config/nginx/nginx.conf.prod /etc/nginx/nginx.conf
 	sudo systemctl restart nginx
 
+alpp: ## Run alp on production
+	sudo alp -f /var/log/nginx/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='2[00-99]'
+	sudo alp -f /var/log/nginx/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='3[00-99]'
+	sudo alp -f /var/log/nginx/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='4[00-99]'
+	sudo alp -f /var/log/nginx/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='5[00-99]'
+
 .PHONY: help
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
