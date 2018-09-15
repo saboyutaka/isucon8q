@@ -11,7 +11,7 @@ require_relative 'sheets'
 module Torb
   class Web < Sinatra::Base
     configure :development do
-      use Rack::Lineprof
+      use Rack::Lineprof, profile: 'web.rb'
       require 'sinatra/reloader'
       register Sinatra::Reloader
     end

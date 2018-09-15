@@ -63,7 +63,7 @@ const API = (() => {
   return {
     User: {
       register (nickname, loginName, password) {
-        return fetch('/api/users', {
+        return fetch('/api/users?lineprof=web.rb', {
           method: 'POST',
           headers: new Headers({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ nickname: nickname, login_name: loginName, password: password }),
@@ -71,7 +71,7 @@ const API = (() => {
         }).then(handleJSON).then(handleJSONError);
       },
       login (loginName, password) {
-        return fetch('/api/actions/login', {
+        return fetch('/api/actions/login?lineprof=web.rb', {
           method: 'POST',
           headers: new Headers({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ login_name: loginName, password: password }),
@@ -79,7 +79,7 @@ const API = (() => {
         }).then(handleJSON).then(handleJSONError);
       },
       logout () {
-        return fetch('/api/actions/logout', {
+        return fetch('/api/actions/logout?lineprof=web.rb', {
           method: 'POST',
           headers: new Headers({ 'Content-Type': 'application/json' }),
           body: '{}',
@@ -87,7 +87,7 @@ const API = (() => {
         }).then(handleJSON).then(handleJSONError);
       },
       getDetails (id) {
-        return fetch(`/api/users/${id}`, {
+        return fetch(`/api/users/${id}?lineprof=web.rb`, {
           method: 'GET',
           credentials: 'same-origin',
         }).then(handleJSON).then(handleJSONError);
@@ -95,19 +95,19 @@ const API = (() => {
     },
     Event: {
       getAll () {
-        return fetch('/api/events', {
+        return fetch('/api/events?lineprof=web.rb', {
           method: 'GET',
           credentials: 'same-origin',
         }).then(handleJSON).then(handleJSONError);
       },
       getDetails (eventId) {
-        return fetch(`/api/events/${eventId}`, {
+        return fetch(`/api/events/${eventId}?lineprof=web.rb`, {
           method: 'GET',
           credentials: 'same-origin',
         }).then(handleJSON).then(handleJSONError);
       },
       reserveSheet (eventId, sheetRank) {
-        return fetch(`/api/events/${eventId}/actions/reserve`, {
+        return fetch(`/api/events/${eventId}/actions/reserve?lineprof=web.rb`, {
           method: 'POST',
           headers: new Headers({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ sheet_rank: sheetRank }),
@@ -115,7 +115,7 @@ const API = (() => {
         }).then(handleJSON).then(handleJSONError);
       },
       freeSheet (eventId, sheetRank, sheetNum) {
-        return fetch(`/api/events/${eventId}/sheets/${sheetRank}/${sheetNum}/reservation`, {
+        return fetch(`/api/events/${eventId}/sheets/${sheetRank}/${sheetNum}/reservation?lineprof=web.rb`, {
           method: 'DELETE',
           credentials: 'same-origin',
         }).then(handleJSON).then(handleJSONError);
