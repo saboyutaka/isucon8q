@@ -6,7 +6,7 @@ gem 'puma'
 gem 'sinatra'
 gem 'sinatra-contrib'
 
-gem 'erubis'
+gem 'erubi'
 gem 'redis'
 gem 'oj'
 
