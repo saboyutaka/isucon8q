@@ -104,9 +104,7 @@ module Torb
         begin
           event_ids = db.query('SELECT * FROM events ORDER BY id ASC').select(&where).map { |e| e['id'] }
           events = event_ids.map do |event_id|
-            event = get_event(event_id)
-            event['sheets'].each { |sheet| sheet.delete('detail') }
-            event
+            get_event_data_with_remain_sheets(event_id)
           end
           db.query('COMMIT')
         rescue
