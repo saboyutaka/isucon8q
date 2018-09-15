@@ -48,6 +48,14 @@ _download_dbdump: ## Download db.dump.tgz from Dropbox
 	@if ! [ -f db/db.dump ];then curl -L -O -J 'https://www.dropbox.com/s/pbkxpnd2av9pjd7/db.dump?dl=0' && mv db.dump db; fi
 
 
+## 本番用
+
+update-ruby: ## update ruby
+	sudo cp /home/isucon/torb/webapp/config/systemd/torb.ruby.service /etc/systemd/system/torb.ruby.service
+	sudo systemctl daemon-reload
+	cd  /home/isucon/torb/webapp/ruby; /home/isucon/local/ruby/bin/bundle install
+	sudo systemctl restart torb.ruby
+
 .PHONY: help
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
