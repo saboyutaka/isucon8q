@@ -192,8 +192,10 @@ module Torb
       end
 
       def get_event_data_with_remain_sheets(event_id)
-        event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
+        # event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
+        event = $event_cache[event_id.to_i]&.[] :data
         return unless event
+        event = event.dup
 
         event['total']   = 1000
         event['remains'] = 0
