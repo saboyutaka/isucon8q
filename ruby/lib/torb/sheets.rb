@@ -1,3 +1,4 @@
+SHEET_PRICES = { 'S' => 5000, 'A' => 3000, 'B' => 1000, 'C' => 0 }
 SHEETS_S = (1..50).map { |n| { 'id' => n, 'rank' => 'S', 'num' => n, 'price' => 5000 } }
 SHEETS_A = (51..200).map { |n| { 'id' => n, 'rank' => 'A', 'num' => n - 50, 'price' => 3000 } }
 SHEETS_B = (201..500).map { |n| { 'id' => n, 'rank' => 'B', 'num' => n - 200, 'price' => 1000 } }

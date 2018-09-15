@@ -78,6 +78,13 @@ module Torb
         events
       end
 
+      def get_only_event_data(event_id)
+        event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
+        return unless event
+
+        event
+      end
+
       def get_event(event_id, login_user_id = nil)
         event = db.xquery('SELECT * FROM events WHERE id = ?', event_id).first
         return unless event
@@ -211,8 +218,8 @@ module Torb
 
       rows = db.xquery('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id WHERE r.user_id = ? ORDER BY IFNULL(r.canceled_at, r.reserved_at) DESC LIMIT 5', user['id'])
       recent_reservations = rows.map do |row|
-        event = get_event(row['event_id'])
-        price = event['sheets'][row['sheet_rank']]['price']
+        event = get_only_event_data(row['event_id'])
+        price = event['price'] + SHEET_PRICES[row['sheet_rank']]
         event.delete('sheets')
         event.delete('total')
         event.delete('remains')
