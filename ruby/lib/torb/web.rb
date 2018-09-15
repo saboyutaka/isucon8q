@@ -12,7 +12,10 @@ def redis
 end
 
 def db
-  Thread.current[:db] ||= Mysql2::Client.new(
+  Thread.current[:db] ||= new_db_connection
+end
+def new_db_connection
+  Mysql2::Client.new(
     host: ENV['DB_HOST'],
     port: ENV['DB_PORT'],
     username: ENV['DB_USER'],
@@ -24,6 +27,29 @@ def db
     init_command: 'SET SESSION sql_mode="STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"',
   )
 end
+
+def wait_for_db
+  new_db_connection.close
+rescue => e
+  puts "waiting for db launch: #{e}"
+  sleep 1
+  retry
+end
+
+def wait_for_redis(host_option = {})
+  redis = Redis.new host_option
+  begin
+    redis.get 'test'
+  rescue => e
+    puts "waiting for redis launch: #{e}"
+    sleep 1
+    retry
+  end
+  redis.close
+end
+
+wait_for_db
+wait_for_redis host: ENV['REDIS_HOST'] || 'localhost'
 
 def init_redis_reservation
   p :start_redis_sheets_initialize
@@ -79,9 +105,6 @@ module Torb
     end
 
     helpers do
-      def redis
-        @redis ||= Redis.new(host: ENV['REDIS_HOST'] || 'localhost')
-      end
 
       def db
         Thread.current[:db] ||= Mysql2::Client.new(
@@ -242,7 +265,6 @@ module Torb
 
     get '/initialize' do
       system "../db/init.sh"
-
       status 204
     end
 
