@@ -179,7 +179,7 @@ module Torb
     end
 
     get '/initialize' do
-      system "../../db/init.sh"
+      system "../db/init.sh"
 
       status 204
     end
