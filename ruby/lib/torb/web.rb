@@ -4,11 +4,14 @@ require 'erubi'
 require 'mysql2'
 require 'mysql2-cs-bind'
 require 'redis'
+require 'pry'
+require 'rack-lineprof'
 require_relative 'sheets'
 
 module Torb
   class Web < Sinatra::Base
     configure :development do
+      use Rack::Lineprof
       require 'sinatra/reloader'
       register Sinatra::Reloader
     end
