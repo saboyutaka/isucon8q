@@ -55,6 +55,7 @@ wait_for_redis host: ENV['REDIS_HOST'] || 'localhost'
 
 $conn = Connection.new do |message|
   type, data = message
+  p [:ev, type, data, message]
   case type
   when :event
     (($event_cache[data['id']] ||= { reservations: {} })[:data] ||= {}).update data
@@ -65,7 +66,7 @@ $conn = Connection.new do |message|
     if payload
       $event_cache[eid][:reservations][sid] = payload
     else
-      $event_cache[eid][:reservations].delete [sid]
+      $event_cache[eid][:reservations].delete sid
     end
   when :init
     init_cache
@@ -87,7 +88,7 @@ def init_cache
   db.query('SELECT * FROM events').each do |event|
     reservations_cache = {}
     $event_cache[event['id']] = { data: event, reservations: reservations_cache }
-    db.xquery('SELECT sheet_id FROM reservations WHERE canceled_at IS NULL and event_id = ?', event['id']).each do |res|
+    db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event['id']).each do |res|
       reservations_cache[res['sheet_id']] = [res['user_id'], res['reserved_at'].to_i]
     end
   end
@@ -181,10 +182,11 @@ module Torb
       end
 
       def get_only_event_data(event_id)
-        event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
-        return unless event
-
-        event
+        $event_cache[event_id.to_i]&.[] :data
+        # event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
+        # return unless event
+        #
+        # event
       end
 
       def get_event_data_with_remain_sheets(event_id)
@@ -214,8 +216,10 @@ module Torb
       end
 
       def get_event(event_id, login_user_id = nil)
-        event = db.xquery('SELECT * FROM events WHERE id = ?', event_id).first
+        event = $event_cache[event_id.to_i]&.[] :data
+        # event = db.xquery('SELECT * FROM events WHERE id = ?', event_id).first
         return unless event
+        event = event.dup
 
         event['total']   = 1000
         event['remains'] = 0
@@ -225,14 +229,16 @@ module Torb
           'B' => { 'total' => 300, 'remains' => 0, 'detail' => [], 'price' => event['price'] + 1000},
           'C' => { 'total' => 500, 'remains' => 0, 'detail' => [], 'price' => event['price']}
         }
-        reservation_by_sheet_id = db.xquery('SELECT * FROM reservations WHERE event_id = ? AND canceled_at is null', event['id']).map { |e| [e['sheet_id'], e] }.to_h
+        # reservation_by_sheet_id = db.xquery('SELECT * FROM reservations WHERE event_id = ? AND canceled_at is null', event['id']).map { |e| [e['sheet_id'], e] }.to_h
 
         SHEETS.map(&:dup).each do |sheet|
-          reservation = reservation_by_sheet_id[sheet['id']]
+          # reservation = reservation_by_sheet_id[sheet['id']]
+          reservation = $event_cache[event_id.to_i][:reservations][sheet['id']]
           if reservation
-            sheet['mine']        = true if login_user_id && reservation['user_id'] == login_user_id
+            user_id, at = reservation
+            sheet['mine']        = true if login_user_id == user_id
             sheet['reserved']    = true
-            sheet['reserved_at'] = reservation['reserved_at'].to_i
+            sheet['reserved_at'] = at
           else
             event['remains'] += 1
             event['sheets'][sheet['rank']]['remains'] += 1
@@ -451,7 +457,7 @@ module Torb
         db.xquery('UPDATE reservations SET canceled_at = ? WHERE id = ?', Time.now.utc.strftime('%F %T.%6N'), reservation['id'])
         db.query('COMMIT')
         redis.sadd "sheets_#{event['id']}_#{rank}", sheet['id']
-        conn.broadcast_with_ack [:reserve, [event['id'], sheet['id']]]
+        conn.broadcast_with_ack [:reserve, [event['id'], sheet['id'], nil]]
       rescue => e
         warn "rollback by: #{e}"
         db.query('ROLLBACK')
@@ -508,7 +514,7 @@ module Torb
           redis.sadd "sheets_#{event_id}_B", (201..500).to_a
           redis.sadd "sheets_#{event_id}_C", (501..1000).to_a
         end
-        conn.broadcast_with_ack [:event, { 'id' => event_id, 'title' => title, 'public_fg' => public, 'closed_fg' => false, 'price' => price }]
+        conn.broadcast_with_ack [:event, { 'id' => event_id, 'title' => title, 'public' => public, 'closed' => false, 'price' => price }]
       rescue
         db.query('ROLLBACK')
       end

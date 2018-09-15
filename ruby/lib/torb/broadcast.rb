@@ -6,10 +6,10 @@ class Connection
     @redis = Redis.new host: ENV['REDIS_HOST'] || 'localhost'
     @publish_queue = Queue.new
     @inbox = {}
-    Thread.new { run_ping }
-    Thread.new { run_ping_receive }
-    Thread.new { run_receive(&block) }
-    Thread.new { run_async_publish }
+    Thread.new { run_ping }.report_on_exception = true
+    Thread.new { run_ping_receive }.report_on_exception = true
+    Thread.new { run_receive(&block) }.report_on_exception = true
+    Thread.new { run_async_publish }.report_on_exception = true
   end
 
   def random_id
@@ -101,11 +101,11 @@ class Connection
     @inbox.delete msg_id
   end
 
-  def broadcast message, include_self: false
+  def broadcast message, include_self: true
     async_publish 'data', Oj.dump([message, @worker_id, nil, include_self])
   end
 
-  def broadcast_with_ack message, timeout: 1, include_self: false
+  def broadcast_with_ack message, timeout: 1, include_self: true
     msg_id = random_id
     queue = Queue.new
     @inbox[msg_id] = queue
