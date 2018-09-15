@@ -85,7 +85,7 @@ module Torb
           'B' => { 'total' => 300, 'remains' => 0, 'detail' => [], 'price' => event['price'] + 1000},
           'C' => { 'total' => 500, 'remains' => 0, 'detail' => [], 'price' => event['price']}
         }
-        reservation_by_sheet_id = db.xquery('SELECT * FROM reservations WHERE event_id = ?', event['id']).map { |e| [e['sheet_id'], e] }.to_h
+        reservation_by_sheet_id = db.xquery('SELECT * FROM reservations WHERE event_id = ? AND canceled_at is null', event['id']).map { |e| [e['sheet_id'], e] }.to_h
 
         SHEETS.map(&:dup).each do |sheet|
           reservation = reservation_by_sheet_id[sheet['id']]
