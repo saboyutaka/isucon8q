@@ -59,7 +59,7 @@ http {
   # include /etc/nginx/conf.d/*.conf;
 
   upstream app {
-    server 127.0.0.1:8080;
+    server s1:8080;
     # server unix:/tmp/unicorn.sock;
   }
 
