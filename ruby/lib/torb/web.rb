@@ -1,4 +1,5 @@
 require 'json'
+require 'oj'
 require 'sinatra/base'
 require 'erubi'
 require 'mysql2'
@@ -6,6 +7,7 @@ require 'mysql2-cs-bind'
 require 'redis'
 require_relative 'sheets'
 require_relative 'redis_keys'
+require_relative 'broadcast'
 
 def redis
   @redis ||= Redis.new(host: ENV['REDIS_HOST'] || 'localhost')
@@ -51,10 +53,52 @@ end
 wait_for_db
 wait_for_redis host: ENV['REDIS_HOST'] || 'localhost'
 
+$conn = Connection.new do |message|
+  type, data = message
+  case type
+  when :event
+    (($event_cache[data['id']] ||= { reservations: {} })[:data] ||= {}).update data
+  when :user
+    $user_cache[data['id']] = data
+  when :reserve
+    eid, sid, payload = data
+    if payload
+      $event_cache[eid][:reservations][sid] = payload
+    else
+      $event_cache[eid][:reservations].delete sid
+    end
+  when :init
+    init_cache
+  end
+  :ok
+end
+
+def conn
+  $conn
+end
+
+def init_cache
+  p :start_cache_initialize
+  $user_cache = {}
+  $event_cache = {}
+  db.query('SELECT * FROM users').each do |user|
+    $user_cache[user['id']] = user
+  end
+  db.query('SELECT * FROM events').each do |event|
+    event['public'] = event.delete 'public_fg'
+    event['closed'] = event.delete 'closed_fg'
+    reservations_cache = {}
+    $event_cache[event['id']] = { data: event, reservations: reservations_cache }
+    db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event['id']).each do |res|
+      reservations_cache[res['sheet_id']] = [res['user_id'], res['reserved_at'].to_i]
+    end
+  end
+  p :end_cache_initialize
+end
 def init_redis_reservation
   p :start_redis_sheets_initialize
   redis.flushall
-  db.query('SELECT * FROM events').each do |event|
+  db.query('SELECT id FROM events').each do |event|
     sheet_ids = db.xquery("SELECT sheet_id FROM reservations WHERE canceled_at IS NULL and event_id = #{event['id'].to_i}", as: :array).to_a.flatten
     s_ids = (1..50).to_a - sheet_ids
     a_ids = (51..200).to_a - sheet_ids
@@ -65,10 +109,11 @@ def init_redis_reservation
     redis.sadd "sheets_#{event['id']}_B", b_ids unless b_ids.empty?
     redis.sadd "sheets_#{event['id']}_C", c_ids unless c_ids.empty?
   end
-  p :end_redisSheets_initialize
+  p :end_redis_sheets_initialize
 end
 
 init_redis_reservation
+init_cache
 
 module Torb
   class Web < Sinatra::Base
@@ -121,16 +166,17 @@ module Torb
       end
 
       def get_events(where = nil)
-        where ||= ->(e) { e['public_fg'] }
+        where ||= ->(e) { e['public'] }
 
         db.query('BEGIN')
         begin
-          event_ids = db.query('SELECT * FROM events ORDER BY id ASC').select(&where).map { |e| e['id'] }
+          event_ids = $event_cache.values.map { |a| a[:data] }.select(&where).map { |e| e['id'] }
           events = event_ids.map do |event_id|
             get_event_data_with_remain_sheets(event_id)
           end
           db.query('COMMIT')
-        rescue
+        rescue => e
+          p e
           db.query('ROLLBACK')
         end
 
@@ -138,10 +184,11 @@ module Torb
       end
 
       def get_only_event_data(event_id)
-        event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
-        return unless event
-
-        event
+        $event_cache[event_id.to_i]&.[] :data
+        # event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
+        # return unless event
+        #
+        # event
       end
 
       def get_event_data_with_remain_sheets(event_id)
@@ -171,8 +218,10 @@ module Torb
       end
 
       def get_event(event_id, login_user_id = nil)
-        event = db.xquery('SELECT * FROM events WHERE id = ?', event_id).first
+        event = $event_cache[event_id.to_i]&.[] :data
+        # event = db.xquery('SELECT * FROM events WHERE id = ?', event_id).first
         return unless event
+        event = event.dup
 
         event['total']   = 1000
         event['remains'] = 0
@@ -182,14 +231,16 @@ module Torb
           'B' => { 'total' => 300, 'remains' => 0, 'detail' => [], 'price' => event['price'] + 1000},
           'C' => { 'total' => 500, 'remains' => 0, 'detail' => [], 'price' => event['price']}
         }
-        reservation_by_sheet_id = db.xquery('SELECT * FROM reservations WHERE event_id = ? AND canceled_at is null', event['id']).map { |e| [e['sheet_id'], e] }.to_h
+        # reservation_by_sheet_id = db.xquery('SELECT * FROM reservations WHERE event_id = ? AND canceled_at is null', event['id']).map { |e| [e['sheet_id'], e] }.to_h
 
         SHEETS.map(&:dup).each do |sheet|
-          reservation = reservation_by_sheet_id[sheet['id']]
+          # reservation = reservation_by_sheet_id[sheet['id']]
+          reservation = $event_cache[event_id.to_i][:reservations][sheet['id']]
           if reservation
-            sheet['mine']        = true if login_user_id && reservation['user_id'] == login_user_id
+            user_id, at = reservation
+            sheet['mine']        = true if login_user_id == user_id
             sheet['reserved']    = true
-            sheet['reserved_at'] = reservation['reserved_at'].to_i
+            sheet['reserved_at'] = at
           else
             event['remains'] += 1
             event['sheets'][sheet['rank']]['remains'] += 1
@@ -199,10 +250,6 @@ module Torb
           sheet.delete('price')
           sheet.delete('rank')
         end
-
-        event['public'] = event.delete('public_fg')
-        event['closed'] = event.delete('closed_fg')
-
         event
       end
 
@@ -265,6 +312,8 @@ module Torb
 
     get '/initialize' do
       system "../db/init.sh"
+      conn.broadcast_with_ack :init
+      init_redis_reservation
       status 204
     end
 
@@ -284,6 +333,7 @@ module Torb
         db.xquery('INSERT INTO users (login_name, pass_hash, nickname) VALUES (?, SHA2(?, 256), ?)', login_name, password, nickname)
         user_id = db.last_id
         db.query('COMMIT')
+        conn.broadcast_with_ack [:user, { 'id' => user_id, 'login_name' => login_name, 'password' => password, 'nickname' => nickname }]
       rescue => e
         warn "rollback by: #{e}"
         db.query('ROLLBACK')
@@ -374,9 +424,10 @@ module Torb
       sheet_id = redis.spop("sheets_#{event_id}_#{rank}")&.to_i
       halt_with_error 409, 'sold_out' unless sheet_id
       sheet_num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
-      db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet_id, user['id'], Time.now.utc.strftime('%F %T.%6N'))
+      time = Time.now.utc.strftime('%F %T.%6N')
+      db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet_id, user['id'], time)
       reservation_id = db.last_id
-
+      conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, [user['id'], time.to_i]]]
       status 202
       { id: reservation_id, sheet_rank: rank, sheet_num: sheet_num } .to_json
     end
@@ -405,6 +456,7 @@ module Torb
         db.xquery('UPDATE reservations SET canceled_at = ? WHERE id = ?', Time.now.utc.strftime('%F %T.%6N'), reservation['id'])
         db.query('COMMIT')
         redis.sadd "sheets_#{event['id']}_#{rank}", sheet['id']
+        conn.broadcast_with_ack [:reserve, [event['id'], sheet['id'], nil]]
       rescue => e
         warn "rollback by: #{e}"
         db.query('ROLLBACK')
@@ -461,10 +513,10 @@ module Torb
           redis.sadd "sheets_#{event_id}_B", (201..500).to_a
           redis.sadd "sheets_#{event_id}_C", (501..1000).to_a
         end
-      rescue
+        conn.broadcast_with_ack [:event, { 'id' => event_id, 'title' => title, 'public' => public, 'closed' => false, 'price' => price }]
+      rescue => e
         db.query('ROLLBACK')
       end
-
       event = get_event(event_id)
       event&.to_json
     end
@@ -477,6 +529,7 @@ module Torb
     end
 
     post '/admin/api/events/:id/actions/edit', admin_login_required: true do |event_id|
+      event_id = event_id.to_i
       public = body_params['public'] || false
       closed = body_params['closed'] || false
       public = false if closed
@@ -494,6 +547,7 @@ module Torb
       begin
         db.xquery('UPDATE events SET public_fg = ?, closed_fg = ? WHERE id = ?', public, closed, event['id'])
         db.query('COMMIT')
+        conn.broadcast_with_ack [:event, { 'id' => event_id, 'public' => public, 'closed' => closed }]
       rescue
         db.query('ROLLBACK')
       end
