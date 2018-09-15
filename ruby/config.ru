@@ -1,3 +1,3 @@
-require './app'
+require_relative 'lib/torb/web'
 
-run App
+run Torb::Web
