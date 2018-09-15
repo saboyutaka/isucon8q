@@ -69,7 +69,6 @@ $conn = Connection.new do |message|
     end
   when :init
     init_cache
-    init_redis_reservation
   end
   :ok
 end
@@ -314,6 +313,7 @@ module Torb
     get '/initialize' do
       system "../db/init.sh"
       conn.broadcast_with_ack :init
+      init_redis_reservation
       status 204
     end
 
