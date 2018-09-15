@@ -55,7 +55,6 @@ wait_for_redis host: ENV['REDIS_HOST'] || 'localhost'
 
 $conn = Connection.new do |message|
   type, data = message
-  p [:ev, type, data, message]
   case type
   when :event
     (($event_cache[data['id']] ||= { reservations: {} })[:data] ||= {}).update data
@@ -86,6 +85,8 @@ def init_cache
     $user_cache[user['id']] = user
   end
   db.query('SELECT * FROM events').each do |event|
+    event['public'] = event.delete 'public_fg'
+    event['closed'] = event.delete 'closed_fg'
     reservations_cache = {}
     $event_cache[event['id']] = { data: event, reservations: reservations_cache }
     db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event['id']).each do |res|
@@ -97,7 +98,7 @@ end
 def init_redis_reservation
   p :start_redis_sheets_initialize
   redis.flushall
-  db.query('SELECT * FROM events').each do |event|
+  db.query('SELECT id FROM events').each do |event|
     sheet_ids = db.xquery("SELECT sheet_id FROM reservations WHERE canceled_at IS NULL and event_id = #{event['id'].to_i}", as: :array).to_a.flatten
     s_ids = (1..50).to_a - sheet_ids
     a_ids = (51..200).to_a - sheet_ids
@@ -165,16 +166,17 @@ module Torb
       end
 
       def get_events(where = nil)
-        where ||= ->(e) { e['public_fg'] }
+        where ||= ->(e) { e['public'] }
 
         db.query('BEGIN')
         begin
-          event_ids = db.query('SELECT * FROM events ORDER BY id ASC').select(&where).map { |e| e['id'] }
+          event_ids = $event_cache.values.map { |a| a[:data] }.select(&where).map { |e| e['id'] }
           events = event_ids.map do |event_id|
             get_event_data_with_remain_sheets(event_id)
           end
           db.query('COMMIT')
-        rescue
+        rescue => e
+          p e
           db.query('ROLLBACK')
         end
 
@@ -248,10 +250,6 @@ module Torb
           sheet.delete('price')
           sheet.delete('rank')
         end
-
-        event['public'] = event.delete('public_fg')
-        event['closed'] = event.delete('closed_fg')
-
         event
       end
 
@@ -515,10 +513,9 @@ module Torb
           redis.sadd "sheets_#{event_id}_C", (501..1000).to_a
         end
         conn.broadcast_with_ack [:event, { 'id' => event_id, 'title' => title, 'public' => public, 'closed' => false, 'price' => price }]
-      rescue
+      rescue => e
         db.query('ROLLBACK')
       end
-
       event = get_event(event_id)
       event&.to_json
     end
@@ -548,7 +545,7 @@ module Torb
       begin
         db.xquery('UPDATE events SET public_fg = ?, closed_fg = ? WHERE id = ?', public, closed, event['id'])
         db.query('COMMIT')
-        conn.broadcast_with_ack [:event, { 'id' => event_id, 'public_fg' => public, 'closed_fg' => closed }]
+        conn.broadcast_with_ack [:event, { 'id' => event_id, 'public' => public, 'closed' => closed }]
       rescue
         db.query('ROLLBACK')
       end
