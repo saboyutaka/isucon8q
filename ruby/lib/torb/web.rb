@@ -103,9 +103,7 @@ module Torb
         db.query('BEGIN')
         begin
           event_ids = db.query('SELECT * FROM events ORDER BY id ASC').select(&where).map { |e| e['id'] }
-          events = event_ids.map do |event_id|
-            get_event_data_with_remain_sheets(event_id)
-          end
+          events = get_event_data_with_remain_sheets(event_ids)
           db.query('COMMIT')
         rescue
           db.query('ROLLBACK')
@@ -121,30 +119,32 @@ module Torb
         event
       end
 
-      def get_event_data_with_remain_sheets(event_id)
-        event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
-        return unless event
+      def get_event_data_with_remain_sheets(event_ids)
+        events = db.xquery("SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id IN (#{event_ids.join(', ')})").to_a
+        return if events.empty?
 
-        event['total']   = 1000
-        event['remains'] = 0
-        event['sheets'] = {
-          'S' => { 'total' => 50, 'remains' => 0, 'price' => event['price'] + 5000},
-          'A' => { 'total' => 150, 'remains' => 0, 'price' => event['price'] + 3000},
-          'B' => { 'total' => 300, 'remains' => 0, 'price' => event['price'] + 1000},
-          'C' => { 'total' => 500, 'remains' => 0, 'price' => event['price']}
-        }
+        events.map do |event|
+          event['total'] = 1000
+          event['remains'] = 0
+          event['sheets'] = {
+            'S' => { 'total' => 50, 'remains' => 0, 'price' => event['price'] + 5000 },
+            'A' => { 'total' => 150, 'remains' => 0, 'price' => event['price'] + 3000 },
+            'B' => { 'total' => 300, 'remains' => 0, 'price' => event['price'] + 1000 },
+            'C' => { 'total' => 500, 'remains' => 0, 'price' => event['price'] }
+          }
 
-        remain_sheets_counts = %w(S A B C).map do |rank|
-          key = event_remain_sheet_list(event_id, rank)
-          [rank, redis.scard(key)]
-        end.to_h
+          remain_sheets_counts = %w(S A B C).map do |rank|
+            key = event_remain_sheet_list(event['id'], rank)
+            [rank, redis.scard(key)]
+          end.to_h
 
-        remain_sheets_counts.each do |rank, remain_count|
-          event['remains'] += remain_count
-          event['sheets'][rank]['remains'] = remain_count
+          remain_sheets_counts.each do |rank, remain_count|
+            event['remains'] += remain_count
+            event['sheets'][rank]['remains'] = remain_count
+          end
+
+          event
         end
-
-        event
       end
 
       def get_event(event_id, login_user_id = nil)
@@ -298,10 +298,7 @@ module Torb
       user['total_price'] = db.xquery('SELECT IFNULL(SUM(e.price + s.price), 0) AS total_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.user_id = ? AND r.canceled_at IS NULL', user['id']).first['total_price']
 
       rows = db.xquery('SELECT event_id FROM reservations WHERE user_id = ? GROUP BY event_id ORDER BY MAX(IFNULL(canceled_at, reserved_at)) DESC LIMIT 5', user['id'])
-      recent_events = rows.map do |row|
-        event = get_event_data_with_remain_sheets(row['event_id'])
-        event
-      end
+      recent_events = get_event_data_with_remain_sheets(rows.map { |r| r['event_id'] })
       user['recent_events'] = recent_events
 
       user.to_json
