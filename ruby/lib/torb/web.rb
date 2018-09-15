@@ -5,6 +5,7 @@ require 'mysql2'
 require 'mysql2-cs-bind'
 require 'redis'
 require_relative 'sheets'
+require_relative 'redis_keys'
 
 def redis
   @redis ||= Redis.new(host: ENV['REDIS_HOST'] || 'localhost')
@@ -118,6 +119,32 @@ module Torb
       def get_only_event_data(event_id)
         event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
         return unless event
+
+        event
+      end
+
+      def get_event_data_with_remain_sheets(event_id)
+        event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
+        return unless event
+
+        event['total']   = 1000
+        event['remains'] = 0
+        event['sheets'] = {
+          'S' => { 'total' => 50, 'remains' => 0, 'price' => event['price'] + 5000},
+          'A' => { 'total' => 150, 'remains' => 0, 'price' => event['price'] + 3000},
+          'B' => { 'total' => 300, 'remains' => 0, 'price' => event['price'] + 1000},
+          'C' => { 'total' => 500, 'remains' => 0, 'price' => event['price']}
+        }
+
+        remain_sheets_counts = %w(S A B C).map do |rank|
+          key = event_remain_sheet_list(event_id, rank)
+          [rank, redis.scard(key)]
+        end.to_h
+
+        remain_sheets_counts.each do |rank, remain_count|
+          event['remains'] += remain_count
+          event['sheets'][rank]['remains'] = remain_count
+        end
 
         event
       end
@@ -257,9 +284,6 @@ module Torb
       recent_reservations = rows.map do |row|
         event = get_only_event_data(row['event_id'])
         price = event['price'] + SHEET_PRICES[row['sheet_rank']]
-        event.delete('sheets')
-        event.delete('total')
-        event.delete('remains')
 
         {
           id:          row['id'],
@@ -277,8 +301,7 @@ module Torb
 
       rows = db.xquery('SELECT event_id FROM reservations WHERE user_id = ? GROUP BY event_id ORDER BY MAX(IFNULL(canceled_at, reserved_at)) DESC LIMIT 5', user['id'])
       recent_events = rows.map do |row|
-        event = get_event(row['event_id'])
-        event['sheets'].each { |_, sheet| sheet.delete('detail') }
+        event = get_event_data_with_remain_sheets(row['event_id'])
         event
       end
       user['recent_events'] = recent_events
