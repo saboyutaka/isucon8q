@@ -3,3 +3,4 @@ db/db.dump
 go/vendor/
 nodejs/node_modules/
 perl/local/
+ruby/vendor/bundle
