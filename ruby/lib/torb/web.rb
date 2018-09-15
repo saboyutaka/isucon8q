@@ -6,6 +6,43 @@ require 'mysql2-cs-bind'
 require 'redis'
 require_relative 'sheets'
 
+def redis
+  @redis ||= Redis.new(host: ENV['REDIS_HOST'] || 'localhost')
+end
+
+def db
+  Thread.current[:db] ||= Mysql2::Client.new(
+    host: ENV['DB_HOST'],
+    port: ENV['DB_PORT'],
+    username: ENV['DB_USER'],
+    password: ENV['DB_PASS'],
+    database: ENV['DB_DATABASE'],
+    database_timezone: :utc,
+    cast_booleans: true,
+    reconnect: true,
+    init_command: 'SET SESSION sql_mode="STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"',
+  )
+end
+
+def init_redis_reservation
+  p :start_redis_sheets_initialize
+  redis.flushall
+  db.query('SELECT * FROM events').each do |event|
+    sheet_ids = db.xquery("SELECT sheet_id FROM reservations WHERE canceled_at IS NULL and event_id = #{event['id'].to_i}", as: :array).to_a.flatten
+    s_ids = (1..50).to_a - sheet_ids
+    a_ids = (51..200).to_a - sheet_ids
+    b_ids = (201..500).to_a - sheet_ids
+    c_ids = (501..1000).to_a - sheet_ids
+    redis.sadd "sheets_#{event['id']}_S", s_ids unless s_ids.empty?
+    redis.sadd "sheets_#{event['id']}_A", a_ids unless a_ids.empty?
+    redis.sadd "sheets_#{event['id']}_B", b_ids unless b_ids.empty?
+    redis.sadd "sheets_#{event['id']}_C", c_ids unless c_ids.empty?
+  end
+  p :end_redisSheets_initialize
+end
+
+init_redis_reservation
+
 module Torb
   class Web < Sinatra::Base
     configure :development do
@@ -291,27 +328,14 @@ module Torb
       halt_with_error 404, 'invalid_event' unless event && event['public']
       halt_with_error 400, 'invalid_rank' unless validate_rank(rank)
 
-      sheet = nil
-      reservation_id = nil
-      loop do
-        sheet = db.xquery('SELECT * FROM sheets WHERE id NOT IN (SELECT sheet_id FROM reservations WHERE event_id = ? AND canceled_at IS NULL FOR UPDATE) AND `rank` = ? ORDER BY RAND() LIMIT 1', event['id'], rank).first
-        halt_with_error 409, 'sold_out' unless sheet
-        db.query('BEGIN')
-        begin
-          db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet['id'], user['id'], Time.now.utc.strftime('%F %T.%6N'))
-          reservation_id = db.last_id
-          db.query('COMMIT')
-        rescue => e
-          db.query('ROLLBACK')
-          warn "re-try: rollback by #{e}"
-          next
-        end
-
-        break
-      end
+      sheet_id = redis.spop("sheets_#{event_id}_#{rank}")&.to_i
+      halt_with_error 409, 'sold_out' unless sheet_id
+      sheet_num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
+      db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet_id, user['id'], Time.now.utc.strftime('%F %T.%6N'))
+      reservation_id = db.last_id
 
       status 202
-      { id: reservation_id, sheet_rank: rank, sheet_num: sheet['num'] } .to_json
+      { id: reservation_id, sheet_rank: rank, sheet_num: sheet_num } .to_json
     end
 
     delete '/api/events/:id/sheets/:rank/:num/reservation', login_required: true do |event_id, rank, num|
@@ -337,6 +361,7 @@ module Torb
 
         db.xquery('UPDATE reservations SET canceled_at = ? WHERE id = ?', Time.now.utc.strftime('%F %T.%6N'), reservation['id'])
         db.query('COMMIT')
+        redis.sadd "sheets_#{event['id']}_#{rank}", sheet['id']
       rescue => e
         warn "rollback by: #{e}"
         db.query('ROLLBACK')
@@ -387,6 +412,12 @@ module Torb
         db.xquery('INSERT INTO events (title, public_fg, closed_fg, price) VALUES (?, ?, 0, ?)', title, public, price)
         event_id = db.last_id
         db.query('COMMIT')
+        redis.multi do
+          redis.sadd "sheets_#{event_id}_S", (1..50).to_a
+          redis.sadd "sheets_#{event_id}_A", (51..200).to_a
+          redis.sadd "sheets_#{event_id}_B", (201..500).to_a
+          redis.sadd "sheets_#{event_id}_C", (501..1000).to_a
+        end
       rescue
         db.query('ROLLBACK')
       end
