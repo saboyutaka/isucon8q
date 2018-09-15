@@ -4,3 +4,4 @@ go/vendor/
 nodejs/node_modules/
 perl/local/
 ruby/vendor/bundle
+env.sh
