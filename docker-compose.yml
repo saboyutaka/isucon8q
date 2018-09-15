@@ -36,7 +36,7 @@ services:
       - 3306:3306
     volumes:
       - mysql-volume:/var/lib/mysql
-      - ./config/mysql:/etc/mysql/conf.d
+      - ./config/mysql/my.cnf:/etc/mysql/my.cnf
       - ./logs/mysql:/var/log/mysql
       - ./db:/var/tmp
   alp:
