@@ -69,6 +69,7 @@ $conn = Connection.new do |message|
     end
   when :init
     init_cache
+    init_redis_reservation
   end
   :ok
 end
