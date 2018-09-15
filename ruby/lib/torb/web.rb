@@ -1,10 +1,42 @@
 require 'json'
+require 'oj'
 require 'sinatra/base'
 require 'erubi'
 require 'mysql2'
 require 'mysql2-cs-bind'
 require 'redis'
 require_relative 'sheets'
+
+def redis
+  @redis ||= Redis.new(host: ENV['REDIS_HOST'] || 'localhost')
+end
+
+def db
+  Thread.current[:db] ||= Mysql2::Client.new(
+    host: ENV['DB_HOST'],
+    port: ENV['DB_PORT'],
+    username: ENV['DB_USER'],
+    password: ENV['DB_PASS'],
+    database: ENV['DB_DATABASE'],
+    database_timezone: :utc,
+    cast_booleans: true,
+    reconnect: true,
+    init_command: 'SET SESSION sql_mode="STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"',
+  )
+end
+
+def init_redis_reservation
+  p :start_redis_reservation_initialize
+  redis.flushall
+  redis.multi do
+    db.query('SELECT * FROM reservations WHERE canceled_at IS NULL').each do |res|
+      redis.hset "event#{res['event_id']}", res['sheet_id'], Oj.dump([res['user_id'], res['reserved_at'].to_i])
+    end
+  end
+  p :end_redis_reservation_initialize
+end
+
+Thread.new { init_redis_reservation }.join
 
 module Torb
   class Web < Sinatra::Base
@@ -41,23 +73,6 @@ module Torb
     end
 
     helpers do
-      def redis
-        @redis ||= Redis.new(host: ENV['REDIS_HOST'] || 'localhost')
-      end
-
-      def db
-        Thread.current[:db] ||= Mysql2::Client.new(
-          host: ENV['DB_HOST'],
-          port: ENV['DB_PORT'],
-          username: ENV['DB_USER'],
-          password: ENV['DB_PASS'],
-          database: ENV['DB_DATABASE'],
-          database_timezone: :utc,
-          cast_booleans: true,
-          reconnect: true,
-          init_command: 'SET SESSION sql_mode="STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"',
-        )
-      end
 
       def get_events(where = nil)
         where ||= ->(e) { e['public_fg'] }
@@ -71,8 +86,8 @@ module Torb
             event
           end
           db.query('COMMIT')
-        rescue
-          db.query('ROLLBACK')
+        # rescue =>e
+          # db.query('ROLLBACK')
         end
 
         events
@@ -90,14 +105,15 @@ module Torb
           'B' => { 'total' => 300, 'remains' => 0, 'detail' => [], 'price' => event['price'] + 1000},
           'C' => { 'total' => 500, 'remains' => 0, 'detail' => [], 'price' => event['price']}
         }
-        reservation_by_sheet_id = db.xquery('SELECT * FROM reservations WHERE event_id = ? AND canceled_at is null', event['id']).map { |e| [e['sheet_id'], e] }.to_h
+        reservation_by_sheet_id = redis.hgetall "event#{event_id}"
 
         SHEETS.map(&:dup).each do |sheet|
-          reservation = reservation_by_sheet_id[sheet['id']]
+          reservation = reservation_by_sheet_id[sheet['id'].to_s]
           if reservation
-            sheet['mine']        = true if login_user_id && reservation['user_id'] == login_user_id
+            user_id, reserved_at = Oj.load reservation
+            sheet['mine']        = true if user_id == login_user_id
             sheet['reserved']    = true
-            sheet['reserved_at'] = reservation['reserved_at'].to_i
+            sheet['reserved_at'] = reserved_at
           else
             event['remains'] += 1
             event['sheets'][sheet['rank']]['remains'] += 1
@@ -173,7 +189,7 @@ module Torb
 
     get '/initialize' do
       system "../../db/init.sh"
-
+      init_redis_reservation
       status 204
     end
 
@@ -291,9 +307,11 @@ module Torb
         halt_with_error 409, 'sold_out' unless sheet
         db.query('BEGIN')
         begin
-          db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet['id'], user['id'], Time.now.utc.strftime('%F %T.%6N'))
+          reserved_at = Time.now.utc.strftime('%F %T.%6N')
+          db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet['id'], user['id'], reserved_at)
           reservation_id = db.last_id
           db.query('COMMIT')
+          redis.hset "event#{event['id']}", sheet['id'], Oj.dump([user['id'], reserved_at.to_i])
         rescue => e
           db.query('ROLLBACK')
           warn "re-try: rollback by #{e}"
@@ -330,6 +348,7 @@ module Torb
 
         db.xquery('UPDATE reservations SET canceled_at = ? WHERE id = ?', Time.now.utc.strftime('%F %T.%6N'), reservation['id'])
         db.query('COMMIT')
+        redis.hdel "event#{event['id']}", sheet['id']
       rescue => e
         warn "rollback by: #{e}"
         db.query('ROLLBACK')
