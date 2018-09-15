@@ -33,12 +33,10 @@ def init_redis_reservation
     a_ids = (51..200).to_a - sheet_ids
     b_ids = (201..500).to_a - sheet_ids
     c_ids = (501..1000).to_a - sheet_ids
-    redis.multi do
-      s_ids.each { |id| redis.sadd "sheets_#{event['id']}_S", id }
-      a_ids.each { |id| redis.sadd "sheets_#{event['id']}_A", id }
-      b_ids.each { |id| redis.sadd "sheets_#{event['id']}_B", id }
-      c_ids.each { |id| redis.sadd "sheets_#{event['id']}_C", id }
-    end
+    redis.sadd "sheets_#{event['id']}_S", s_ids unless s_ids.empty?
+    redis.sadd "sheets_#{event['id']}_A", a_ids unless a_ids.empty?
+    redis.sadd "sheets_#{event['id']}_B", b_ids unless b_ids.empty?
+    redis.sadd "sheets_#{event['id']}_C", c_ids unless c_ids.empty?
   end
   p :end_redisSheets_initialize
 end
@@ -415,10 +413,10 @@ module Torb
         event_id = db.last_id
         db.query('COMMIT')
         redis.multi do
-          (1..50).each { |id| redis.sadd "sheets_#{event_id}_S", id }
-          (51..200).each { |id| redis.sadd "sheets_#{event_id}_A", id }
-          (201..500).each { |id| redis.sadd "sheets_#{event_id}_B", id }
-          (501..1000).each { |id| redis.sadd "sheets_#{event_id}_C", id }
+          redis.sadd "sheets_#{event_id}_S", (1..50).to_a
+          redis.sadd "sheets_#{event_id}_A", (51..200).to_a
+          redis.sadd "sheets_#{event_id}_B", (201..500).to_a
+          redis.sadd "sheets_#{event_id}_C", (501..1000).to_a
         end
       rescue
         db.query('ROLLBACK')
