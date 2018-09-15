@@ -38,7 +38,7 @@ sudo systemctl enable nginx
 # mysql
 sudo rpm -ivh http://dev.mysql.com/get/mysql57-community-release-el7-8.noarch.rpm
 sudo sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/mysql-community*
-sudo yum --enablerepo=mysql57-community,mysql57-community-source install mysql-community-server
+sudo yum --enablerepo=mysql57-community,mysql57-community-source install -y mysql-community-server
 echo 'skip_grant_table' | sudo tee -a /etc/my.cnf
 sudo systemctl start mysqld.service
 sudo systemctl enable mysqld.service
