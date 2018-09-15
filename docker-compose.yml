@@ -13,12 +13,14 @@ services:
       - 8000:8000
     depends_on:
       - db
+      - redis
     tty: true
     stdin_open: true
     environment:
       DB_HOST: db
       DB_USER: root
       DB_DATABASE: torb
+      REDIS_HOST: redis
   nginx:
     image: saboyutaka/ngx-mruby:2.1.2
     ports:
@@ -39,6 +41,10 @@ services:
       - ./config/mysql:/etc/mysql/conf.d
       - ./logs/mysql:/var/log/mysql
       - ./db:/var/tmp
+  redis:
+    image: redis:4.0-alpine
+    ports:
+      - 6379:6379
   alp:
     image: saboyutaka/alp
     volumes:

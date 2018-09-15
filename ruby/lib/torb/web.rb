@@ -3,6 +3,7 @@ require 'sinatra/base'
 require 'erubi'
 require 'mysql2'
 require 'mysql2-cs-bind'
+require 'redis'
 require_relative 'sheets'
 
 module Torb
@@ -40,6 +41,10 @@ module Torb
     end
 
     helpers do
+      def redis
+        @redis ||= Redis.new(host: ENV['REDIS_HOST'] || 'localhost')
+      end
+
       def db
         Thread.current[:db] ||= Mysql2::Client.new(
           host: ENV['DB_HOST'],
@@ -452,6 +457,10 @@ module Torb
       end
 
       render_report_csv(reports)
+    end
+
+    get '/redis/:key' do |key|
+      redis.get(key)
     end
   end
 end
