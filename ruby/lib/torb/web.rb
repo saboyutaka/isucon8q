@@ -3,6 +3,7 @@ require 'sinatra/base'
 require 'erubi'
 require 'mysql2'
 require 'mysql2-cs-bind'
+require_relative 'sheets'
 
 module Torb
   class Web < Sinatra::Base
