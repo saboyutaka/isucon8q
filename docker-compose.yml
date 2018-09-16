@@ -24,10 +24,10 @@ services:
   nginx:
     image: saboyutaka/ngx-mruby:2.1.2
     ports:
-      - 8080:80
+      - 80:80
     volumes:
       - ./logs/nginx:/var/log/nginx
-      - ./public:/var/www/public
+      - ./static:/var/www/public
       - ./config/nginx/nginx.conf:/usr/local/nginx/conf/nginx.conf
   db:
     image: mysql:5.7
