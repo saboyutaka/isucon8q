@@ -2,7 +2,10 @@
 
 build: ## build develoment environment
 	docker-compose build
+	docker-compose up -d db
 	docker-compose run --rm web bundle install
+	docker-compose exec db sh /var/tmp/wait.sh
+	docker-compose exec db sh /var/tmp/init.sh
 
 serve: up attach ## Run Serve
 
