@@ -67,8 +67,6 @@ update-redis: ## update redis
 
 update-h2o: ## update h2o
 	sudo cp /home/isucon/torb/webapp/config/h2o/h2o.conf /etc/h2o/h2o.conf
-	sudo cp /home/isucon/torb/webapp/config/h2o/server.crt /etc/h2o/tls/server.crt
-	sudo cp /home/isucon/torb/webapp/config/h2o/server.key /etc/h2o/tls/server.key
 	sudo systemctl restart h2o
 
 update-nginx: ## update nginx
@@ -84,6 +82,12 @@ alpp: ## Run alp on production
 	sudo alp -f /var/log/nginx/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='3[00-99]'
 	sudo alp -f /var/log/nginx/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='4[00-99]'
 	sudo alp -f /var/log/nginx/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='5[00-99]'
+
+alph: ## Run alp on h2o
+	sudo alp -f /var/log/h2o/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='2[00-99]'
+	sudo alp -f /var/log/h2o/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='3[00-99]'
+	sudo alp -f /var/log/h2o/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='4[00-99]'
+	sudo alp -f /var/log/h2o/access.log --sum -r --aggregates='/admin/api/reports/events/\d+/sales, /api/events/\d+/sheets/\w+/\d+/reservation, /admin/api/events/\d+/actions/edit, /api/events/\d+, /api/users/\d+' --include-statuses='5[00-99]'
 
 .PHONY: help
 help:
