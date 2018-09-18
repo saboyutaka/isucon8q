@@ -48,20 +48,15 @@ http {
   gzip                on;
 
   # http://qiita.com/harukasan/items/80061c7429a39c0b2dab
-  # proxy_cache_path cache levels=1:2 keys_zone=cache1:4m max_size=50m inactive=120m;
+  proxy_cache_path cache levels=1:2 keys_zone=cache1:4m max_size=50m inactive=120m;
 
   # 静的ファイルのファイルディクリプタキャッシュ
-  # open_file_cache max=100000 inactive=300s;
-  # open_file_cache_valid 300s;
-  # open_file_cache_min_uses 1;
-  # open_file_cache_errors on;
+  open_file_cache max=100000 inactive=300s;
+  open_file_cache_valid 300s;
+  open_file_cache_min_uses 1;
+  open_file_cache_errors on;
 
   # include /etc/nginx/conf.d/*.conf;
-
-  upstream app {
-    server s1:8080;
-    # server unix:/tmp/unicorn.sock;
-  }
 
   server {
     # listen 443 http2;
@@ -107,7 +102,16 @@ http {
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      proxy_pass http://app;
+
+      mruby_set_code $backend '
+        backends = [
+          "172.17.251.2:8080",
+          "172.17.251.1:8080",
+          "172.17.251.3:8080",
+        ]
+        backends[rand(backends.length)]
+      ';
+      proxy_pass  http://$backend;
     }
   }
 }

@@ -70,7 +70,7 @@ update-h2o: ## update h2o
 	sudo systemctl restart h2o
 
 update-nginx: ## update nginx
-	sudo cp /home/isucon/torb/webapp/config/nginx/nginx.conf.prod /etc/nginx/nginx.conf
+	sudo cp /home/isucon/torb/webapp/config/nginx/nginx.conf.prod /usr/local/nginx/conf/nginx.conf
 	sudo rm /var/log/nginx/access.log
 	sudo systemctl restart nginx
 
