@@ -263,7 +263,7 @@ module Torb
         reservations = cached[:reserved_users]
 
         event['total']   = 1000
-        event['remains'] = reservations.values.map(&:size).sum
+        event['remains'] = 1000 - reservations.values.map(&:size).sum
         event['sheets'] = {
           'S' => { 'total' => 50, 'remains' => 50 - reservations['S'].size, 'price' => event['price'] + 5000},
           'A' => { 'total' => 150, 'remains' => 150 - reservations['A'].size, 'price' => event['price'] + 3000},
