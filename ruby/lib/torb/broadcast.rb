@@ -89,7 +89,7 @@ class Connection
     async_publish to, Oj.dump([message, @worker_id, nil, false])
   end
 
-  def send_with_ack message, to:, timeout: 1
+  def send_with_ack message, to:, timeout: 5
     msg_id = random_id
     queue = Queue.new
     @inbox[msg_id] = queue
@@ -105,7 +105,7 @@ class Connection
     async_publish 'data', Oj.dump([message, @worker_id, nil, include_self])
   end
 
-  def broadcast_with_ack message, timeout: 1, include_self: true
+  def broadcast_with_ack message, timeout: 5, include_self: true
     msg_id = random_id
     queue = Queue.new
     @inbox[msg_id] = queue

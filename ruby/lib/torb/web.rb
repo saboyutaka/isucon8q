@@ -563,7 +563,7 @@ module Torb
         db.query('ROLLBACK')
       end
       event = get_event(event_id)
-      Oj.to_json event if event
+      Oj.to_json event
     end
 
     get '/admin/api/events/:id', admin_login_required: true do |event_id|
