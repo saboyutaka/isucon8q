@@ -236,7 +236,7 @@ module Torb
       def get_login_user
         user_id = session[:user_id]
         return unless user_id
-        db.xquery('SELECT id, nickname FROM users WHERE id = ?', user_id).first
+        $user_cache[user_id.to_i]&.slice 'id', 'nickname'
       end
 
       def get_login_administrator
@@ -317,8 +317,8 @@ module Torb
     end
 
     get '/api/users/:id', login_required: true do |user_id|
-      user = db.xquery('SELECT id, nickname FROM users WHERE id = ?', user_id).first
-      if user['id'] != get_login_user['id']
+      user = get_login_user
+      if user_id.to_i != user['id']
         halt_with_error 403, 'forbidden'
       end
 
