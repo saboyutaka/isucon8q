@@ -485,7 +485,7 @@ module Torb
       time = Time.now
       db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet_id, user['id'], time.utc.strftime('%F %T.%6N'))
       reservation_id = db.last_id
-      conn.broadcast [:reserve, [event['id'], sheet_id, user['id'], reservation_id, time.to_i, true]]
+      conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, user['id'], reservation_id, time.to_i, true]]
       status 202
       Oj.to_json({ id: reservation_id, sheet_rank: rank, sheet_num: sheet_num })
     end
@@ -511,7 +511,7 @@ module Torb
       db.xquery('UPDATE reservations SET canceled_at = ? WHERE id = ? AND canceled_at IS NULL', time.utc.strftime('%F %T.%6N'), reservation['id'])
       if db.affected_rows == 1
         redis.sadd "sheets_#{event['id']}_#{rank}", sheet_id
-        conn.broadcast [:reserve, [event['id'], sheet_id, reservation['user_id'], reservation['id'], time.to_i, false]]
+        conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, reservation['user_id'], reservation['id'], time.to_i, false]]
       end
 
       status 204
