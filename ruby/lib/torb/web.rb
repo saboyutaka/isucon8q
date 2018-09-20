@@ -8,7 +8,6 @@ require 'redis'
 require_relative 'sheets'
 require_relative 'redis_keys'
 require_relative 'broadcast'
-# require 'rack-lineprof'
 
 def redis
   @redis ||= Redis.new(host: ENV['REDIS_HOST'] || 'localhost')
@@ -54,6 +53,17 @@ end
 wait_for_db
 wait_for_redis host: ENV['REDIS_HOST'] || 'localhost'
 
+def logs_add logs, id, time
+  if a = logs.find{|i,_|i==id}
+    a[1] = [a[1], time].max
+  else
+    logs << [id, time]
+  end
+  logs.sort_by!(&:last)
+  logs.shift if logs.size > 5
+end
+
+
 $conn = Connection.new do |message|
   type, data = message
   case type
@@ -64,19 +74,25 @@ $conn = Connection.new do |message|
       add_new_event_cache data
     end
   when :user
-    $user_cache[data['id']] = data
+    $user_cache[data['id']] = data.merge total: 0, reserve_logs: [], event_logs: []
   when :reserve
-    eid, sid, user_id, reserved_at = data
+    eid, sid, user_id, reservation_id, time, reserved = data
     rank = rank_by_sheet_id sid
     cache = $event_cache[eid]
     num = sid - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
-    if user_id
+    uc = $user_cache[user_id]
+    logs_add uc[:reserve_logs], reservation_id, time
+    logs_add uc[:event_logs], eid, time
+    price = cache[:data]['price'] + SHEET_PRICES[rank]
+    if reserved
+      uc[:total] += price
       cache[:reserved_users][rank][sid] = user_id
       cache[:user_reserve_counts][rank][user_id] += 1
       sheet = cache[:detail][rank][num - 1]
-      sheet['reserved_at'] = reserved_at
+      sheet['reserved_at'] = time
       sheet['reserved'] = true
     else
+      uc[:total] -= price
       cache[:reserved_users][rank].delete sid
       cache[:user_reserve_counts][rank][user_id] -= 1
       sheet = cache[:detail][rank][num - 1] = { 'num' => num }
@@ -113,16 +129,17 @@ def init_cache
   $user_cache = {}
   $event_cache = {}
   db.query('SELECT * FROM users').each do |user|
-    $user_cache[user['id']] = user
+    $user_cache[user['id']] = user.merge total: 0, reserve_logs: [], event_logs: []
   end
   db.query('SELECT * FROM events').each do |event|
+    event_id = event['id']
     event['public'] = event.delete 'public_fg'
     event['closed'] = event.delete 'closed_fg'
     event_cache = add_new_event_cache event
     reservation_cache = event_cache[:reserved_users]
     user_reserve_counts = event_cache[:user_reserve_counts]
     detail_cache = event_cache[:detail]
-    db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event['id']).each do |res|
+    db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event_id).each do |res|
       sheet_id = res['sheet_id']
       user_id = res['user_id']
       reserved_at = res['reserved_at'].to_i
@@ -131,6 +148,13 @@ def init_cache
       user_reserve_counts[rank][user_id] += 1
       num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
       detail_cache[rank][num - 1] = { 'num' => num, 'reserved' => true, 'reserved_at' => reserved_at }
+      $user_cache[user_id][:total] += event['price'] + SHEET_PRICES[rank] if res['canceled_at'].nil?
+    end
+    db.xquery('SELECT id, user_id, reserved_at FROM reservations WHERE event_id = ' + event_id.to_s, as: :array).each do |id, user_id, reserved_at|
+      uc = $user_cache[user_id]
+      time = reserved_at.to_i
+      logs_add uc[:reserve_logs], id, time
+      logs_add uc[:event_logs], event_id, time
     end
   end
   p :end_cache_initialize
@@ -155,12 +179,15 @@ end
 init_redis_reservation
 init_cache
 
+ENV['RACK_ENV']='production'
 module Torb
   class Web < Sinatra::Base
     configure :development do
-      require 'sinatra/reloader'
-      register Sinatra::Reloader
-      # use Rack::Lineprof
+      # require 'sinatra/reloader'
+      # register Sinatra::Reloader
+      # require 'rack-lineprof'
+      # use Rack::Lineprof, profile: 'web.rb'
+      enable :logging
     end
 
     set :root, File.expand_path('../..', __dir__)
@@ -315,7 +342,7 @@ module Torb
 
     get '/initialize' do
       system "../db/init.sh"
-      conn.broadcast_with_ack :init
+      conn.broadcast_with_ack :init, timeout: 9
       init_redis_reservation
       status 204
     end
@@ -352,8 +379,9 @@ module Torb
       if user_id.to_i != user['id']
         halt_with_error 403, 'forbidden'
       end
-
-      rows = db.xquery('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id WHERE r.user_id = ? ORDER BY IFNULL(r.canceled_at, r.reserved_at) DESC LIMIT 5', user['id'])
+      uc = $user_cache[user['id']]
+      row_ids = uc[:reserve_logs].map(&:first)
+      rows = row_ids.empty? ? [] : db.xquery('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id WHERE r.id in (?) ORDER BY IFNULL(r.canceled_at, r.reserved_at) DESC LIMIT 5', row_ids)
       recent_reservations = rows.map do |row|
         event = get_only_event_data(row['event_id'])
         price = event['price'] + SHEET_PRICES[row['sheet_rank']]
@@ -370,12 +398,12 @@ module Torb
       end
 
       user['recent_reservations'] = recent_reservations
-      user['total_price'] = db.xquery('SELECT IFNULL(SUM(e.price + s.price), 0) AS total_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.user_id = ? AND r.canceled_at IS NULL', user['id']).first['total_price']
+      user['total_price'] = uc[:total]
 
-      rows = db.xquery('SELECT event_id FROM reservations WHERE user_id = ? GROUP BY event_id ORDER BY MAX(IFNULL(canceled_at, reserved_at)) DESC LIMIT 5', user['id'])
-      recent_events = rows.map do |row|
-        event = get_event_data_with_remain_sheets(row['event_id'])
-        event
+      row_ids = uc[:event_logs].map(&:first).reverse
+      p uc
+      recent_events = row_ids.map do |id|
+        get_event_data_with_remain_sheets id
       end
       user['recent_events'] = recent_events
 
@@ -427,10 +455,10 @@ module Torb
       sheet_id = redis.spop("sheets_#{event_id}_#{rank}")&.to_i
       halt_with_error 409, 'sold_out' unless sheet_id
       sheet_num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
-      time = Time.now.utc.strftime('%F %T.%6N')
-      db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet_id, user['id'], time)
+      time = Time.now
+      db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet_id, user['id'], time.utc.strftime('%F %T.%6N'))
       reservation_id = db.last_id
-      conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, user['id'], time.to_i]]
+      conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, user['id'], reservation_id, time.to_i, true]]
       status 202
       { id: reservation_id, sheet_rank: rank, sheet_num: sheet_num } .to_json
     end
@@ -441,23 +469,22 @@ module Torb
       event = get_event(event_id, user['id'])
       halt_with_error 404, 'invalid_event' unless event && event['public']
       halt_with_error 404, 'invalid_rank'  unless validate_rank(rank)
-
       sheet_offset = {'S' => 0, 'A' => 50, 'B' => 200, 'C' => 500 }[rank]
       sheet_id = sheet_offset + num.to_i
       halt_with_error 404, 'invalid_sheet' if sheet_id <= 0 || sheet_id > 1000 || rank_by_sheet_id(sheet_id) != rank
-
-      reserved_user_id = $event_cache[event_id][:reserved_users][rank][sheet_id]
-      unless reserved_user_id
+      reservation = db.xquery('select id, user_id from reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL', event_id, sheet_id).first
+      unless reservation
         halt_with_error 400, 'not_reserved'
       end
-      if reserved_user_id != user['id']
+      if reservation['user_id'] != user['id']
         halt_with_error 403, 'not_permitted'
       end
 
-      db.xquery('UPDATE reservations SET canceled_at = ? WHERE event_id = ? AND sheet_id = ? AND user_id = ? AND canceled_at IS NULL', Time.now.utc.strftime('%F %T.%6N'), event_id, sheet_id, reserved_user_id)
+      time = Time.now
+      db.xquery('UPDATE reservations SET canceled_at = ? WHERE id = ? AND canceled_at IS NULL', time.utc.strftime('%F %T.%6N'), reservation['id'])
       if db.affected_rows == 1
         redis.sadd "sheets_#{event['id']}_#{rank}", sheet_id
-        conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, nil]]
+        conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, reservation['user_id'], reservation['id'], time.to_i, false]]
       end
 
       status 204
