@@ -635,6 +635,7 @@ module Torb
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
       conn.broadcast_with_ack :pause
+      sleep 2
       body = render_report_csv($event_cache[event_id.to_i][:reports].compact)
       conn.broadcast :resume
       body
@@ -642,6 +643,7 @@ module Torb
 
     get '/admin/api/reports/sales', admin_login_required: true do
       conn.broadcast_with_ack :pause
+      sleep 2
       body = render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+))
       conn.broadcast :resume
       body
