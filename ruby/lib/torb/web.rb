@@ -83,12 +83,6 @@ rescue => e
   p e.backtrace
 end
 
-def wait_while_paused
-  while $paused
-    sleep 0.2
-  end
-end
-
 $conn = Connection.new do |message|
   begin
   type, data = message
@@ -118,7 +112,7 @@ $conn = Connection.new do |message|
       sheet = cache[:detail][rank][num - 1]
       sheet['reserved_at'] = time
       sheet['reserved'] = true
-      cache[:reports][reservation_id] = [reservation_id,eid,sid,num,price,user_id,Time.at(time).iso8601,'']
+      cache[:reports][reservation_id] = [reservation_id,eid,rank,num,price,user_id,Time.at(time).iso8601,'']
     else
       uc[:total] -= price
       cache[:reserved_users][rank].delete sid
@@ -132,10 +126,6 @@ $conn = Connection.new do |message|
       init_cache
       save_cache
     end
-  when :pause
-    $paused = true
-  when :resume
-    $paused = false
   end
   :ok
   rescue=>e
@@ -201,7 +191,7 @@ def init_cache
 
       rank = rank_by_sheet_id sheet_id
       sheet_num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
-      reports_cache[id] = [id,event_id,sheet_id,sheet_num,
+      reports_cache[id] = [id,event_id,rank,sheet_num,
         event['price'] + SHEET_PRICES[rank],user_id,
         reserved_at.iso8601,canceled_at&.iso8601 || '']
       reports_cache[id] << reports_cache[id].join(',')+"\n"
@@ -227,15 +217,6 @@ def init_redis_reservation
 end
 
 Thread.new { init_redis_reservation; init_cache }.join
-
-$aa=Queue.new
-1.times{$aa<<true}
-def get_lock
-  $aa.deq
-end
-def return_lock
-  $aa<<true
-end
 
 ENV['RACK_ENV']='production'
 module Torb
@@ -272,15 +253,6 @@ module Torb
           halt_with_error 401, 'admin_login_required'
         end
       end
-    end
-
-    before do
-      get_lock
-      wait_while_paused
-    end
-
-    after do
-      return_lock
     end
 
     before '/api/*|/admin/api/*' do
@@ -386,6 +358,7 @@ module Torb
 
       def render_report_csv(reports)
         keys = %i[reservation_id event_id rank num price user_id sold_at canceled_at]
+
         body = keys.join(',') + "\n" + reports.sort_by { |report| report[6] }.map do |report|
           report[8]
         end.join
@@ -634,19 +607,11 @@ module Torb
     end
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
-      conn.broadcast_with_ack :pause
-      sleep 2
-      body = render_report_csv($event_cache[event_id.to_i][:reports].compact)
-      conn.broadcast :resume
-      body
+      render_report_csv($event_cache[event_id.to_i][:reports].compact, reports)
     end
 
     get '/admin/api/reports/sales', admin_login_required: true do
-      conn.broadcast_with_ack :pause
-      sleep 2
-      body = render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+))
-      conn.broadcast :resume
-      body
+      render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+), reports)
     end
 
     get '/redis/:key' do |key|
