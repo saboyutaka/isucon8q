@@ -118,13 +118,13 @@ $conn = Connection.new do |message|
       sheet = cache[:detail][rank][num - 1]
       sheet['reserved_at'] = time
       sheet['reserved'] = true
-      cache[:reports][reservation_id] = [reservation_id,eid,rank,num,price,user_id,Time.at(time).iso8601,'']
+      cache[:reports][reservation_id] = [reservation_id,eid,rank,num,price,user_id,Time.at(time).utc.iso8601,'']
     else
       uc[:total] -= price
       cache[:reserved_users][rank].delete sid
       counts[user_id] = (counts[user_id] || 0) - 1
       sheet = cache[:detail][rank][num - 1] = { 'num' => num }
-      cache[:reports][reservation_id][7] = Time.at(time).iso8601
+      cache[:reports][reservation_id][7] = Time.at(time).utc.iso8601
     end
     cache[:reports][reservation_id][8] = cache[:reports][reservation_id][0,8].join(',')+"\n"
   when :init
