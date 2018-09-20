@@ -606,10 +606,12 @@ module Torb
     end
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
+      sleep 0.5
       render_report_csv($event_cache[event_id.to_i][:reports].compact)
     end
 
     get '/admin/api/reports/sales', admin_login_required: true do
+      sleep 0.5
       render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+))
     end
 
