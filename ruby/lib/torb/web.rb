@@ -58,16 +58,28 @@ $conn = Connection.new do |message|
   type, data = message
   case type
   when :event
-    (($event_cache[data['id']] ||= { reservations: {} })[:data] ||= {}).update data
+    if (cache = $event_cache[data['id']])
+      cache[:data].update data
+    else
+      add_new_event_cache data
+    end
   when :user
     $user_cache[data['id']] = data
   when :reserve
-    eid, sid, payload = data
+    eid, sid, user_id, reserved_at = data
     rank = rank_by_sheet_id sid
-    if payload
-      $event_cache[eid][:reservations][rank][sid] = payload
+    cache = $event_cache[eid]
+    num = sid - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
+    if user_id
+      cache[:reserved_users][rank][sid] = user_id
+      cache[:user_reserve_counts][rank][user_id] += 1
+      sheet = cache[:detail][rank][num - 1]
+      sheet['reserved_at'] = reserved_at
+      sheet['reserved'] = true
     else
-      $event_cache[eid][:reservations][rank].delete sid
+      cache[:reserved_users][rank].delete sid
+      cache[:user_reserve_counts][rank][user_id] -= 1
+      sheet = cache[:detail][rank][num - 1] = { 'num' => num }
     end
   when :init
     init_cache
@@ -83,6 +95,19 @@ def rank_by_sheet_id sheet_id
   sheet_id <= 50 ? 'S' : sheet_id <= 200 ? 'A' : sheet_id <= 500 ? 'B' : 'C'
 end
 
+def add_new_event_cache event
+  detail_cache = { 'S' => [], 'A' => [], 'B' => [], 'C' => [] }
+  {'S'=>50,'A'=>150,'B'=>300,'C'=>500}.each do |r, n|
+    detail_cache[r] = (1..n).map { |n| { 'num' => n } }
+  end
+  $event_cache[event['id']] = {
+    data: event,
+    reserved_users: { 'S' => {}, 'A' => {}, 'B' => {}, 'C' => {} },
+    user_reserve_counts: { 'S' => Hash.new(0), 'A' => Hash.new(0), 'B' => Hash.new(0), 'C' => Hash.new(0) },
+    detail: detail_cache
+  }
+end
+
 def init_cache
   p :start_cache_initialize
   $user_cache = {}
@@ -93,11 +118,19 @@ def init_cache
   db.query('SELECT * FROM events').each do |event|
     event['public'] = event.delete 'public_fg'
     event['closed'] = event.delete 'closed_fg'
-    reservations_cache = { 'S' => {},'A' => {},'B' => {},'C' => {} }
-    $event_cache[event['id']] = { data: event, reservations: reservations_cache }
+    event_cache = add_new_event_cache event
+    reservation_cache = event_cache[:reserved_users]
+    user_reserve_counts = event_cache[:user_reserve_counts]
+    detail_cache = event_cache[:detail]
     db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event['id']).each do |res|
       sheet_id = res['sheet_id']
-      reservations_cache[rank_by_sheet_id(sheet_id)][sheet_id] = [res['user_id'], res['reserved_at'].to_i]
+      user_id = res['user_id']
+      reserved_at = res['reserved_at'].to_i
+      rank = rank_by_sheet_id sheet_id
+      reservation_cache[rank][sheet_id] = user_id
+      user_reserve_counts[rank][user_id] += 1
+      num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
+      detail_cache[rank][num - 1] = { 'num' => num, 'reserved' => true, 'reserved_at' => reserved_at }
     end
   end
   p :end_cache_initialize
@@ -179,7 +212,7 @@ module Torb
         cached = $event_cache[event_id]
         return unless cached
         event = cached[:data].dup
-        reservations = cached[:reservations]
+        reservations = cached[:reserved_users]
 
         event['total']   = 1000
         event['remains'] = reservations.values.map(&:size).sum
@@ -193,11 +226,12 @@ module Torb
       end
 
       def get_event(event_id, login_user_id = nil)
-        event = $event_cache[event_id.to_i]&.[] :data
+        event_id = event_id.to_i
+        cache = $event_cache[event_id]
         # event = db.xquery('SELECT * FROM events WHERE id = ?', event_id).first
-        return unless event
-        event = event.dup
-        reservations = $event_cache[event_id.to_i][:reservations]
+        return unless cache
+        event = cache[:data].dup
+        reservations = cache[:reserved_users]
         event['total']   = 1000
         event['remains'] = 1000 - reservations.values.map(&:size).sum
         event_sheets = event['sheets'] = {
@@ -207,20 +241,16 @@ module Torb
           'C' => { 'total' => 500, 'remains' => 500 - reservations['C'].size, 'detail' => [], 'price' => event['price']}
         }
 
-        { 'S' => SHEETS_S, 'A' => SHEETS_A, 'B' => SHEETS_B, 'C'=> SHEETS_C }.each do |rank, sheets|
-          rank_reservations = reservations[rank]
-          detail = event_sheets[rank]['detail']
-          sheets.each do |sheet|
-            sheet_id = sheet['id']
-            reservation = rank_reservations[sheet_id]
-            if reservation
-              user_id, at = reservation
-              sheet_data = { 'num' => sheet['num'], 'reserved' => true, 'reserved_at' => at }
-              sheet_data['mine'] = true if login_user_id == user_id
-            else
-              sheet_data = { 'num' => sheet['num'] }
-            end
-            detail.push(sheet_data)
+        event_sheets.each do |rank, sheet|
+          if cache[:user_reserve_counts][rank][login_user_id] == 0
+            event_sheets[rank]['detail'] = cache[:detail][rank]
+            next
+          end
+          id_offset = {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
+          reserved_user_set = reservations[rank]
+          event_sheets[rank]['detail'] = cache[:detail][rank].map do |sheet|
+            next sheet unless sheet['reserved'] && reserved_user_set[sheet['num']+id_offset] == login_user_id
+            sheet.merge 'mine' => true
           end
         end
         event
@@ -400,7 +430,7 @@ module Torb
       time = Time.now.utc.strftime('%F %T.%6N')
       db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet_id, user['id'], time)
       reservation_id = db.last_id
-      conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, [user['id'], time.to_i]]]
+      conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, user['id'], time.to_i]]
       status 202
       { id: reservation_id, sheet_rank: rank, sheet_num: sheet_num } .to_json
     end
@@ -416,7 +446,7 @@ module Torb
       sheet_id = sheet_offset + num.to_i
       halt_with_error 404, 'invalid_sheet' if sheet_id <= 0 || sheet_id > 1000 || rank_by_sheet_id(sheet_id) != rank
 
-      reserved_user_id = $event_cache[event_id][:reservations][rank][sheet_id]&.first
+      reserved_user_id = $event_cache[event_id][:reserved_users][rank][sheet_id]
       unless reserved_user_id
         halt_with_error 400, 'not_reserved'
       end
