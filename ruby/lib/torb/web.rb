@@ -312,7 +312,7 @@ module Torb
       end
 
       def halt_with_error(status = 500, error = 'unknown')
-        halt status, { error: error }.to_json
+        halt status, Oj.to_json({ error: error })
       end
 
       def render_report_csv(reports)
@@ -371,7 +371,7 @@ module Torb
       end
 
       status 201
-      { id: user_id, nickname: nickname }.to_json
+      Oj.to_json({ id: user_id, nickname: nickname })
     end
 
     get '/api/users/:id', login_required: true do |user_id|
@@ -407,7 +407,7 @@ module Torb
       end
       user['recent_events'] = recent_events
 
-      user.to_json
+      Oj.to_json user
     end
 
 
@@ -422,7 +422,7 @@ module Torb
       session['user_id'] = user['id']
 
       user = get_login_user
-      user.to_json
+      Oj.to_json user
     end
 
     post '/api/actions/logout', login_required: true do
@@ -460,7 +460,7 @@ module Torb
       reservation_id = db.last_id
       conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, user['id'], reservation_id, time.to_i, true]]
       status 202
-      { id: reservation_id, sheet_rank: rank, sheet_num: sheet_num } .to_json
+      Oj.to_json({ id: reservation_id, sheet_rank: rank, sheet_num: sheet_num })
     end
 
     delete '/api/events/:id/sheets/:rank/:num/reservation', login_required: true do |event_id, rank, num|
@@ -508,7 +508,7 @@ module Torb
       session['administrator_id'] = administrator['id']
 
       administrator = get_login_administrator
-      administrator.to_json
+      Oj.to_json administrator
     end
 
     post '/admin/api/actions/logout', admin_login_required: true do
@@ -542,7 +542,7 @@ module Torb
         db.query('ROLLBACK')
       end
       event = get_event(event_id)
-      event&.to_json
+      Oj.to_json event if event
     end
 
     get '/admin/api/events/:id', admin_login_required: true do |event_id|
