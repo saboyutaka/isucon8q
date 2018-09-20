@@ -104,17 +104,18 @@ $conn = Connection.new do |message|
     logs_add uc[:reserve_logs], reservation_id, time
     logs_add uc[:event_logs], eid, time
     price = cache[:data]['price'] + SHEET_PRICES[rank]
+    counts = cache[:user_reserve_counts][rank]
     if reserved
       uc[:total] += price
       cache[:reserved_users][rank][sid] = user_id
-      cache[:user_reserve_counts][rank][user_id] += 1
+      counts[user_id] = (counts[user_id] || 0) + 1
       sheet = cache[:detail][rank][num - 1]
       sheet['reserved_at'] = time
       sheet['reserved'] = true
     else
       uc[:total] -= price
       cache[:reserved_users][rank].delete sid
-      cache[:user_reserve_counts][rank][user_id] -= 1
+      counts[user_id] = (counts[user_id] || 0) - 1
       sheet = cache[:detail][rank][num - 1] = { 'num' => num }
     end
   when :init
@@ -145,7 +146,7 @@ def add_new_event_cache event
   $event_cache[event['id']] = {
     data: event,
     reserved_users: { 'S' => {}, 'A' => {}, 'B' => {}, 'C' => {} },
-    user_reserve_counts: { 'S' => Hash.new(0), 'A' => Hash.new(0), 'B' => Hash.new(0), 'C' => Hash.new(0) },
+    user_reserve_counts: { 'S' => {}, 'A' => {}, 'B' => {}, 'C' => {} },
     detail: detail_cache
   }
 end
@@ -171,7 +172,8 @@ def init_cache
       reserved_at = res['reserved_at'].to_i
       rank = rank_by_sheet_id sheet_id
       reservation_cache[rank][sheet_id] = user_id
-      user_reserve_counts[rank][user_id] += 1
+      counts = user_reserve_counts[rank]
+      counts[user_id] = (counts[user_id] || 0) + 1
       num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
       detail_cache[rank][num - 1] = { 'num' => num, 'reserved' => true, 'reserved_at' => reserved_at }
       $user_cache[user_id][:total] += event['price'] + SHEET_PRICES[rank] if res['canceled_at'].nil?
@@ -294,7 +296,7 @@ module Torb
         }
 
         event_sheets.each do |rank, sheet|
-          if cache[:user_reserve_counts][rank][login_user_id] == 0
+          if cache[:user_reserve_counts][rank][login_user_id].to_i == 0
             event_sheets[rank]['detail'] = cache[:detail][rank]
             next
           end
