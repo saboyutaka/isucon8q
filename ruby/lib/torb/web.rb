@@ -8,6 +8,7 @@ require 'redis'
 require_relative 'sheets'
 require_relative 'redis_keys'
 require_relative 'broadcast'
+# require 'rack-lineprof'
 
 def redis
   @redis ||= Redis.new(host: ENV['REDIS_HOST'] || 'localhost')
@@ -126,6 +127,7 @@ module Torb
     configure :development do
       require 'sinatra/reloader'
       register Sinatra::Reloader
+      # use Rack::Lineprof
     end
 
     set :root, File.expand_path('../..', __dir__)
@@ -195,32 +197,30 @@ module Torb
         # event = db.xquery('SELECT * FROM events WHERE id = ?', event_id).first
         return unless event
         event = event.dup
-
+        reservations = $event_cache[event_id.to_i][:reservations]
         event['total']   = 1000
-        event['remains'] = 0
-        event['sheets'] = {
-          'S' => { 'total' => 50, 'remains' => 0, 'detail' => [], 'price' => event['price'] + 5000},
-          'A' => { 'total' => 150, 'remains' => 0, 'detail' => [], 'price' => event['price'] + 3000},
-          'B' => { 'total' => 300, 'remains' => 0, 'detail' => [], 'price' => event['price'] + 1000},
-          'C' => { 'total' => 500, 'remains' => 0, 'detail' => [], 'price' => event['price']}
+        event['remains'] = 1000 - reservations.values.map(&:size).sum
+        event_sheets = event['sheets'] = {
+          'S' => { 'total' => 50, 'remains' => 50 - reservations['S'].size, 'detail' => [], 'price' => event['price'] + 5000},
+          'A' => { 'total' => 150, 'remains' => 150 - reservations['A'].size, 'detail' => [], 'price' => event['price'] + 3000},
+          'B' => { 'total' => 300, 'remains' => 300 - reservations['B'].size, 'detail' => [], 'price' => event['price'] + 1000},
+          'C' => { 'total' => 500, 'remains' => 500 - reservations['C'].size, 'detail' => [], 'price' => event['price']}
         }
 
-        SHEETS.map(&:dup).each do |sheet|
+
+        SHEETS.each do |sheet|
           sheet_id = sheet['id']
-          reservation = $event_cache[event_id.to_i][:reservations][rank_by_sheet_id(sheet_id)][sheet_id]
+          rank = sheet['rank']
+          reservation = reservations[rank][sheet_id]
           if reservation
             user_id, at = reservation
-            sheet['mine']        = true if login_user_id == user_id
-            sheet['reserved']    = true
-            sheet['reserved_at'] = at
+            sheet_data = { 'num' => sheet['num'], 'reserved' => true, 'reserved_at' => at }
+            sheet_data['mine'] = true if login_user_id == user_id
           else
-            event['remains'] += 1
-            event['sheets'][sheet['rank']]['remains'] += 1
+            sheet_data = { 'num' => sheet['num'] }
+            event_sheets[rank]['remains'] += 1
           end
-          event['sheets'][sheet['rank']]['detail'].push(sheet)
-          sheet.delete('id')
-          sheet.delete('price')
-          sheet.delete('rank')
+          event_sheets[rank]['detail'].push(sheet_data)
         end
         event
       end
@@ -373,7 +373,7 @@ module Torb
 
     get '/api/events' do
       events = get_events.map(&method(:sanitize_event))
-      events.to_json
+      Oj.to_json events
     end
 
     get '/api/events/:id' do |event_id|
@@ -382,7 +382,7 @@ module Torb
       halt_with_error 404, 'not_found' if event.nil? || !event['public']
 
       event = sanitize_event(event)
-      event.to_json
+      Oj.to_json event
     end
 
     post '/api/events/:id/actions/reserve', login_required: true do |event_id|
@@ -460,7 +460,7 @@ module Torb
 
     get '/admin/api/events', admin_login_required: true do
       events = get_events(->(_) { true })
-      events.to_json
+      Oj.to_json events
     end
 
     post '/admin/api/events', admin_login_required: true do
@@ -491,7 +491,7 @@ module Torb
       event = get_event(event_id)
       halt_with_error 404, 'not_found' unless event
 
-      event.to_json
+      Oj.to_json event
     end
 
     post '/admin/api/events/:id/actions/edit', admin_login_required: true do |event_id|
@@ -519,7 +519,7 @@ module Torb
       end
 
       event = get_event(event_id)
-      event.to_json
+      Oj.to_json event
     end
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
