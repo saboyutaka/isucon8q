@@ -207,20 +207,21 @@ module Torb
           'C' => { 'total' => 500, 'remains' => 500 - reservations['C'].size, 'detail' => [], 'price' => event['price']}
         }
 
-
-        SHEETS.each do |sheet|
-          sheet_id = sheet['id']
-          rank = sheet['rank']
-          reservation = reservations[rank][sheet_id]
-          if reservation
-            user_id, at = reservation
-            sheet_data = { 'num' => sheet['num'], 'reserved' => true, 'reserved_at' => at }
-            sheet_data['mine'] = true if login_user_id == user_id
-          else
-            sheet_data = { 'num' => sheet['num'] }
-            event_sheets[rank]['remains'] += 1
+        { 'S' => SHEETS_S, 'A' => SHEETS_A, 'B' => SHEETS_B, 'C'=> SHEETS_C }.each do |rank, sheets|
+          rank_reservations = reservations[rank]
+          detail = event_sheets[rank]['detail']
+          sheets.each do |sheet|
+            sheet_id = sheet['id']
+            reservation = rank_reservations[sheet_id]
+            if reservation
+              user_id, at = reservation
+              sheet_data = { 'num' => sheet['num'], 'reserved' => true, 'reserved_at' => at }
+              sheet_data['mine'] = true if login_user_id == user_id
+            else
+              sheet_data = { 'num' => sheet['num'] }
+            end
+            detail.push(sheet_data)
           end
-          event_sheets[rank]['detail'].push(sheet_data)
         end
         event
       end
