@@ -5,3 +5,4 @@ nodejs/node_modules/
 perl/local/
 ruby/vendor/bundle
 env.sh
+initialize_data.json

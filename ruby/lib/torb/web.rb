@@ -63,6 +63,25 @@ def logs_add logs, id, time
   logs.shift if logs.size > 5
 end
 
+CACHE_JSON_PATH = './initialize_data.json'
+def load_cache
+  return false unless File.exist? CACHE_JSON_PATH
+  data = Oj.load File.read(CACHE_JSON_PATH)
+  $user_cache = data[:user_cache]
+  $event_cache = data[:event_cache]
+  true
+rescue => e
+  p e
+  p e.backtrace
+end
+
+def save_cache
+  data = { user_cache: $user_cache, event_cache: $event_cache }
+  File.write CACHE_JSON_PATH, Oj.dump(data)
+rescue => e
+  p e
+  p e.backtrace
+end
 
 $conn = Connection.new do |message|
   type, data = message
@@ -98,7 +117,10 @@ $conn = Connection.new do |message|
       sheet = cache[:detail][rank][num - 1] = { 'num' => num }
     end
   when :init
-    init_cache
+    if data || !load_cache
+      init_cache
+      save_cache
+    end
   end
   :ok
 end
@@ -150,9 +172,9 @@ def init_cache
       detail_cache[rank][num - 1] = { 'num' => num, 'reserved' => true, 'reserved_at' => reserved_at }
       $user_cache[user_id][:total] += event['price'] + SHEET_PRICES[rank] if res['canceled_at'].nil?
     end
-    db.xquery('SELECT id, user_id, reserved_at FROM reservations WHERE event_id = ' + event_id.to_s, as: :array).each do |id, user_id, reserved_at|
+    db.xquery('SELECT id, user_id, reserved_at, canceled_at FROM reservations WHERE event_id = ' + event_id.to_s, as: :array).each do |id, user_id, reserved_at, canceled_at|
       uc = $user_cache[user_id]
-      time = reserved_at.to_i
+      time = [reserved_at, canceled_at].compact.map(&:to_i).max
       logs_add uc[:reserve_logs], id, time
       logs_add uc[:event_logs], event_id, time
     end
@@ -340,9 +362,9 @@ module Torb
       erb :index
     end
 
-    get '/initialize' do
+    get '/initialize' do # /initialize?generate=true to re-generate initialize_data.json
       system "../db/init.sh"
-      conn.broadcast_with_ack :init, timeout: 9
+      conn.broadcast_with_ack [:init, !!params[:generate]], timeout: 9
       init_redis_reservation
       status 204
     end
