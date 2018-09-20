@@ -246,7 +246,7 @@ module Torb
       end
 
       def validate_rank(rank)
-        db.xquery('SELECT COUNT(*) AS total_sheets FROM sheets WHERE `rank` = ?', rank).first['total_sheets'] > 0
+        %w[S A B C].include? rank
       end
 
       def body_params
@@ -405,34 +405,28 @@ module Torb
     end
 
     delete '/api/events/:id/sheets/:rank/:num/reservation', login_required: true do |event_id, rank, num|
+      event_id = event_id.to_i
       user  = get_login_user
       event = get_event(event_id, user['id'])
       halt_with_error 404, 'invalid_event' unless event && event['public']
       halt_with_error 404, 'invalid_rank'  unless validate_rank(rank)
 
-      sheet = db.xquery('SELECT * FROM sheets WHERE `rank` = ? AND num = ?', rank, num).first
-      halt_with_error 404, 'invalid_sheet' unless sheet
+      sheet_offset = {'S' => 0, 'A' => 50, 'B' => 200, 'C' => 500 }[rank]
+      sheet_id = sheet_offset + num.to_i
+      halt_with_error 404, 'invalid_sheet' if sheet_id <= 0 || sheet_id > 1000 || rank_by_sheet_id(sheet_id) != rank
 
-      db.query('BEGIN')
-      begin
-        reservation = db.xquery('SELECT * FROM reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL GROUP BY event_id HAVING reserved_at = MIN(reserved_at) FOR UPDATE', event['id'], sheet['id']).first
-        unless reservation
-          db.query('ROLLBACK')
-          halt_with_error 400, 'not_reserved'
-        end
-        if reservation['user_id'] != user['id']
-          db.query('ROLLBACK')
-          halt_with_error 403, 'not_permitted'
-        end
+      reserved_user_id = $event_cache[event_id][:reservations][rank][sheet_id]&.first
+      unless reserved_user_id
+        halt_with_error 400, 'not_reserved'
+      end
+      if reserved_user_id != user['id']
+        halt_with_error 403, 'not_permitted'
+      end
 
-        db.xquery('UPDATE reservations SET canceled_at = ? WHERE id = ?', Time.now.utc.strftime('%F %T.%6N'), reservation['id'])
-        db.query('COMMIT')
-        redis.sadd "sheets_#{event['id']}_#{rank}", sheet['id']
-        conn.broadcast_with_ack [:reserve, [event['id'], sheet['id'], nil]]
-      rescue => e
-        warn "rollback by: #{e}"
-        db.query('ROLLBACK')
-        halt_with_error
+      db.xquery('UPDATE reservations SET canceled_at = ? WHERE event_id = ? AND sheet_id = ? AND user_id = ? AND canceled_at IS NULL', Time.now.utc.strftime('%F %T.%6N'), event_id, sheet_id, reserved_user_id)
+      if db.affected_rows == 1
+        redis.sadd "sheets_#{event['id']}_#{rank}", sheet_id
+        conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, nil]]
       end
 
       status 204
