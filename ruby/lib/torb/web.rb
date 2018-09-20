@@ -209,12 +209,15 @@ Thread.new { init_redis_reservation; init_cache }.join
 ENV['RACK_ENV']='production'
 module Torb
   class Web < Sinatra::Base
-    configure :development do
+    configure do
       # require 'sinatra/reloader'
       # register Sinatra::Reloader
       # require 'rack-lineprof'
       # use Rack::Lineprof, profile: 'web.rb'
       enable :logging
+      file = File.new("#{settings.root}/sinatra.log", 'a+')
+      file.sync = true
+      use Rack::CommonLogger, file
     end
 
     set :root, File.expand_path('../..', __dir__)
@@ -245,7 +248,6 @@ module Torb
     end
 
     helpers do
-
       def get_events(where = nil)
         where ||= ->(e) { e['public'] }
         event_ids = $event_cache.values.map { |a| a[:data] }.select(&where).map { |e| e['id'] }
