@@ -115,7 +115,7 @@ $conn = Connection.new do |message|
       cache[:reports][reservation_id] = [reservation_id,eid,sid,num,price,user_id,Time.at(time).iso8601,'']
     else
       uc[:total] -= price
-      cache[:reserved_users][rank].delete sid
+      cache[:reserved_users][rank].delete sid if cache[:reserved_users][rank][sid] == user_id
       counts[user_id] = (counts[user_id] || 0) - 1
       sheet = cache[:detail][rank][num - 1] = { 'num' => num }
       cache[:reports][reservation_id][7] = Time.at(time).iso8601
