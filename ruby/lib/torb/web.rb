@@ -228,6 +228,15 @@ end
 
 Thread.new { init_redis_reservation; init_cache }.join
 
+$aa=Queue.new
+4.times{$aa<<true}
+def get_lock
+  $aa.deq
+end
+def return_lock
+  $aa<<true
+end
+
 ENV['RACK_ENV']='production'
 module Torb
   class Web < Sinatra::Base
@@ -266,7 +275,12 @@ module Torb
     end
 
     before do
+      get_lock
       wait_while_paused
+    end
+
+    after do
+      return_lock
     end
 
     before '/api/*|/admin/api/*' do
