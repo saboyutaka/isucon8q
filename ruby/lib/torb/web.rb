@@ -112,12 +112,15 @@ $conn = Connection.new do |message|
       sheet = cache[:detail][rank][num - 1]
       sheet['reserved_at'] = time
       sheet['reserved'] = true
+      cache[:reports][reservation_id] = [reservation_id,eid,sid,num,price,user_id,Time.at(time).iso8601,'']
     else
       uc[:total] -= price
       cache[:reserved_users][rank].delete sid
       counts[user_id] = (counts[user_id] || 0) - 1
       sheet = cache[:detail][rank][num - 1] = { 'num' => num }
+      cache[:reports][reservation_id][7] = Time.at(time).iso8601
     end
+    cache[:reports][reservation_id][8] = cache[:reports][reservation_id][0,8].join(',')+"\n"
   when :init
     if data || !load_cache
       init_cache
@@ -147,7 +150,8 @@ def add_new_event_cache event
     data: event,
     reserved_users: { 'S' => {}, 'A' => {}, 'B' => {}, 'C' => {} },
     user_reserve_counts: { 'S' => {}, 'A' => {}, 'B' => {}, 'C' => {} },
-    detail: detail_cache
+    detail: detail_cache,
+    reports: []
   }
 end
 
@@ -166,6 +170,7 @@ def init_cache
     reservation_cache = event_cache[:reserved_users]
     user_reserve_counts = event_cache[:user_reserve_counts]
     detail_cache = event_cache[:detail]
+    reports_cache = event_cache[:reports]
     db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event_id).each do |res|
       sheet_id = res['sheet_id']
       user_id = res['user_id']
@@ -178,11 +183,18 @@ def init_cache
       detail_cache[rank][num - 1] = { 'num' => num, 'reserved' => true, 'reserved_at' => reserved_at }
       $user_cache[user_id][:total] += event['price'] + SHEET_PRICES[rank] if res['canceled_at'].nil?
     end
-    db.xquery("SELECT id, user_id, reserved_at, canceled_at FROM reservations WHERE event_id = #{event_id.to_s}", as: :array).each do |id, user_id, reserved_at, canceled_at|
+    db.xquery("SELECT id, user_id, sheet_id, reserved_at, canceled_at FROM reservations WHERE event_id = #{event_id.to_s}", as: :array).each do |id, user_id, sheet_id, reserved_at, canceled_at|
       uc = $user_cache[user_id]
       time = [reserved_at, canceled_at].compact.map(&:to_i).max
       logs_add uc[:reserve_logs], id, time
       logs_add uc[:event_logs], event_id, time
+
+      rank = rank_by_sheet_id sheet_id
+      sheet_num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
+      reports_cache[id] = [id,event_id,sheet_id,sheet_num,
+        event['price'] + SHEET_PRICES[rank],user_id,
+        reserved_at.iso8601,canceled_at&.iso8601 || '']
+      reports_cache[id] << reports_cache[id].join(',')+"\n"
     end
   end
   p :end_cache_initialize
@@ -346,12 +358,9 @@ module Torb
 
       def render_report_csv(reports)
         keys = %i[reservation_id event_id rank num price user_id sold_at canceled_at]
-        body = keys.join(',')
-        body << "\n"
-        reports.sort_by { |report| report[6] }.each do |report|
-          body << report.join(',')
-          body << "\n"
-        end
+        body = keys.join(',') + "\n" + reports.sort_by { |report| report[6] }.map do |report|
+          report[8]
+        end.join
 
         headers({
           'Content-Type'        => 'text/csv; charset=UTF-8',
@@ -389,7 +398,6 @@ module Torb
         user_id = db.last_id
         conn.broadcast_with_ack [:user, { 'id' => user_id, 'login_name' => login_name, 'password' => password, 'nickname' => nickname }]
       rescue => e
-        warn "rollback by: #{e}"
         halt_with_error
       end
 
@@ -598,26 +606,11 @@ module Torb
     end
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
-      event = get_event(event_id)
-
-      reservations = db.xquery('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.event_id = ? ORDER BY reserved_at ASC', event['id'])
-      reports = reservations.map do |reservation|
-        [reservation['id'],event['id'],reservation['sheet_rank'],reservation['sheet_num'],
-        reservation['event_price'] + reservation['sheet_price'],reservation['user_id'],
-        reservation['reserved_at'].iso8601,reservation['canceled_at']&.iso8601 || '']
-      end
-
-      render_report_csv(reports)
+      render_report_csv($event_cache[event_id.to_i][:reports].compact)
     end
 
     get '/admin/api/reports/sales', admin_login_required: true do
-      reservations = db.query('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.id AS event_id, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id ORDER BY reserved_at ASC')
-      reports = reservations.map do |reservation|
-        [reservation['id'],reservation['event_id'],reservation['sheet_rank'],reservation['sheet_num'],
-        reservation['event_price'] + reservation['sheet_price'],reservation['user_id'],
-        reservation['reserved_at'].iso8601,reservation['canceled_at']&.iso8601 || '']
-      end
-      render_report_csv(reports)
+      render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+))
     end
 
     get '/redis/:key' do |key|
