@@ -150,10 +150,10 @@ def init_cache
   p :start_cache_initialize
   $user_cache = {}
   $event_cache = {}
-  db.query('SELECT users.* FROM users limit 99999999').each do |user|
+  db.query('SELECT users.* FROM users').each do |user|
     $user_cache[user['id']] = user.merge total: 0, reserve_logs: [], event_logs: []
   end
-  db.query('SELECT * FROM events limit 99999999').each do |event|
+  db.query('SELECT * FROM events').each do |event|
     event_id = event['id']
     event['public'] = event.delete 'public_fg'
     event['closed'] = event.delete 'closed_fg'
@@ -161,7 +161,7 @@ def init_cache
     reservation_cache = event_cache[:reserved_users]
     user_reserve_counts = event_cache[:user_reserve_counts]
     detail_cache = event_cache[:detail]
-    db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ? limit 99999999', event_id).each do |res|
+    db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event_id).each do |res|
       sheet_id = res['sheet_id']
       user_id = res['user_id']
       reserved_at = res['reserved_at'].to_i
@@ -172,7 +172,7 @@ def init_cache
       detail_cache[rank][num - 1] = { 'num' => num, 'reserved' => true, 'reserved_at' => reserved_at }
       $user_cache[user_id][:total] += event['price'] + SHEET_PRICES[rank] if res['canceled_at'].nil?
     end
-    db.xquery("SELECT id, user_id, reserved_at, canceled_at FROM reservations WHERE event_id = #{event_id.to_s} limit 99999999", as: :array).each do |id, user_id, reserved_at, canceled_at|
+    db.xquery("SELECT id, user_id, reserved_at, canceled_at FROM reservations WHERE event_id = #{event_id.to_s}", as: :array).each do |id, user_id, reserved_at, canceled_at|
       uc = $user_cache[user_id]
       time = [reserved_at, canceled_at].compact.map(&:to_i).max
       logs_add uc[:reserve_logs], id, time
