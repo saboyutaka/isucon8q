@@ -229,7 +229,7 @@ end
 Thread.new { init_redis_reservation; init_cache }.join
 
 $aa=Queue.new
-4.times{$aa<<true}
+1.times{$aa<<true}
 def get_lock
   $aa.deq
 end
