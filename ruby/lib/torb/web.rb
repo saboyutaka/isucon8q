@@ -122,12 +122,12 @@ $conn = Connection.new do |message|
     end
     cache[:reports][reservation_id][8] = cache[:reports][reservation_id][0,8].join(',')+"\n"
   when :init
-    $paused = true
+    # $paused = true
     if data || !load_cache
       init_cache
       save_cache
     end
-    $paused = false
+    # $paused = false
   when :pause
     $paused = true
   when :resume
@@ -616,16 +616,16 @@ module Torb
     end
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
-      conn.broadcast_with_ack :pause
+      # conn.broadcast_with_ack :pause
       body = render_report_csv($event_cache[event_id.to_i][:reports].compact)
-      conn.broadcast :resume
+      # conn.broadcast :resume
       body
     end
 
     get '/admin/api/reports/sales', admin_login_required: true do
-      conn.broadcast_with_ack :pause
+      # conn.broadcast_with_ack :pause
       body = render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+))
-      conn.broadcast :resume
+      # conn.broadcast :resume
       body
     end
 
