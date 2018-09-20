@@ -70,17 +70,11 @@ def load_cache
   $user_cache = data[:user_cache]
   $event_cache = data[:event_cache]
   true
-rescue => e
-  p e
-  p e.backtrace
 end
 
 def save_cache
   data = { user_cache: $user_cache, event_cache: $event_cache }
   File.write CACHE_JSON_PATH, Oj.dump(data)
-rescue => e
-  p e
-  p e.backtrace
 end
 
 def wait_while_paused
