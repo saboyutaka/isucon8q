@@ -62,10 +62,11 @@ $conn = Connection.new do |message|
     $user_cache[data['id']] = data
   when :reserve
     eid, sid, payload = data
+    rank = rank_by_sheet_id sid
     if payload
-      $event_cache[eid][:reservations][sid] = payload
+      $event_cache[eid][:reservations][rank][sid] = payload
     else
-      $event_cache[eid][:reservations].delete sid
+      $event_cache[eid][:reservations][rank].delete sid
     end
   when :init
     init_cache
@@ -75,6 +76,10 @@ end
 
 def conn
   $conn
+end
+
+def rank_by_sheet_id sheet_id
+  sheet_id <= 50 ? 'S' : sheet_id <= 200 ? 'A' : sheet_id <= 500 ? 'B' : 'C'
 end
 
 def init_cache
@@ -87,10 +92,11 @@ def init_cache
   db.query('SELECT * FROM events').each do |event|
     event['public'] = event.delete 'public_fg'
     event['closed'] = event.delete 'closed_fg'
-    reservations_cache = {}
+    reservations_cache = { 'S' => {},'A' => {},'B' => {},'C' => {} }
     $event_cache[event['id']] = { data: event, reservations: reservations_cache }
     db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event['id']).each do |res|
-      reservations_cache[res['sheet_id']] = [res['user_id'], res['reserved_at'].to_i]
+      sheet_id = res['sheet_id']
+      reservations_cache[rank_by_sheet_id(sheet_id)][sheet_id] = [res['user_id'], res['reserved_at'].to_i]
     end
   end
   p :end_cache_initialize
@@ -151,36 +157,12 @@ module Torb
 
     helpers do
 
-      def db
-        Thread.current[:db] ||= Mysql2::Client.new(
-          host: ENV['DB_HOST'],
-          port: ENV['DB_PORT'],
-          username: ENV['DB_USER'],
-          password: ENV['DB_PASS'],
-          database: ENV['DB_DATABASE'],
-          database_timezone: :utc,
-          cast_booleans: true,
-          reconnect: true,
-          init_command: 'SET SESSION sql_mode="STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"',
-        )
-      end
-
       def get_events(where = nil)
         where ||= ->(e) { e['public'] }
-
-        db.query('BEGIN')
-        begin
-          event_ids = $event_cache.values.map { |a| a[:data] }.select(&where).map { |e| e['id'] }
-          events = event_ids.map do |event_id|
-            get_event_data_with_remain_sheets(event_id)
-          end
-          db.query('COMMIT')
-        rescue => e
-          p e
-          db.query('ROLLBACK')
+        event_ids = $event_cache.values.map { |a| a[:data] }.select(&where).map { |e| e['id'] }
+        event_ids.map do |event_id|
+          get_event_data_with_remain_sheets(event_id)
         end
-
-        events
       end
 
       def get_only_event_data(event_id)
@@ -192,28 +174,19 @@ module Torb
       end
 
       def get_event_data_with_remain_sheets(event_id)
-        event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
-        return unless event
+        cached = $event_cache[event_id]
+        return unless cached
+        event = cached[:data].dup
+        reservations = cached[:reservations]
 
         event['total']   = 1000
-        event['remains'] = 0
+        event['remains'] = reservations.values.map(&:size).sum
         event['sheets'] = {
-          'S' => { 'total' => 50, 'remains' => 0, 'price' => event['price'] + 5000},
-          'A' => { 'total' => 150, 'remains' => 0, 'price' => event['price'] + 3000},
-          'B' => { 'total' => 300, 'remains' => 0, 'price' => event['price'] + 1000},
-          'C' => { 'total' => 500, 'remains' => 0, 'price' => event['price']}
+          'S' => { 'total' => 50, 'remains' => 50 - reservations['S'].size, 'price' => event['price'] + 5000},
+          'A' => { 'total' => 150, 'remains' => 150 - reservations['A'].size, 'price' => event['price'] + 3000},
+          'B' => { 'total' => 300, 'remains' => 300 - reservations['B'].size, 'price' => event['price'] + 1000},
+          'C' => { 'total' => 500, 'remains' => 500 - reservations['C'].size, 'price' => event['price']}
         }
-
-        remain_sheets_counts = %w(S A B C).map do |rank|
-          key = event_remain_sheet_list(event_id, rank)
-          [rank, redis.scard(key)]
-        end.to_h
-
-        remain_sheets_counts.each do |rank, remain_count|
-          event['remains'] += remain_count
-          event['sheets'][rank]['remains'] = remain_count
-        end
-
         event
       end
 
@@ -231,11 +204,10 @@ module Torb
           'B' => { 'total' => 300, 'remains' => 0, 'detail' => [], 'price' => event['price'] + 1000},
           'C' => { 'total' => 500, 'remains' => 0, 'detail' => [], 'price' => event['price']}
         }
-        # reservation_by_sheet_id = db.xquery('SELECT * FROM reservations WHERE event_id = ? AND canceled_at is null', event['id']).map { |e| [e['sheet_id'], e] }.to_h
 
         SHEETS.map(&:dup).each do |sheet|
-          # reservation = reservation_by_sheet_id[sheet['id']]
-          reservation = $event_cache[event_id.to_i][:reservations][sheet['id']]
+          sheet_id = sheet['id']
+          reservation = $event_cache[event_id.to_i][:reservations][rank_by_sheet_id(sheet_id)][sheet_id]
           if reservation
             user_id, at = reservation
             sheet['mine']        = true if login_user_id == user_id
