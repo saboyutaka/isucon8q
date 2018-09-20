@@ -265,9 +265,9 @@ module Torb
       end
     end
 
-    before do
-      wait_while_paused
-    end
+    # before do
+    #   wait_while_paused
+    # end
 
     before '/api/*|/admin/api/*' do
       content_type :json
@@ -621,16 +621,16 @@ module Torb
     end
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
-      conn.broadcast_with_ack :pause
+      # conn.broadcast_with_ack :pause
       body = render_report_csv($event_cache[event_id.to_i][:reports].compact)
-      conn.broadcast :resume
+      # conn.broadcast :resume
       body
     end
 
     get '/admin/api/reports/sales', admin_login_required: true do
-      conn.broadcast_with_ack :pause
+      # conn.broadcast_with_ack :pause
       body = render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+))
-      conn.broadcast :resume
+      # conn.broadcast :resume
       body
     end
 
