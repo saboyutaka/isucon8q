@@ -83,6 +83,12 @@ rescue => e
   p e.backtrace
 end
 
+def wait_while_paused
+  while $paused
+    sleep 0.2
+  end
+end
+
 $conn = Connection.new do |message|
   begin
   type, data = message
@@ -126,6 +132,10 @@ $conn = Connection.new do |message|
       init_cache
       save_cache
     end
+  when :pause
+    $paused = true
+  when :resume
+    $paused = false
   end
   :ok
   rescue=>e
@@ -253,6 +263,10 @@ module Torb
           halt_with_error 401, 'admin_login_required'
         end
       end
+    end
+
+    before do
+      wait_while_paused
     end
 
     before '/api/*|/admin/api/*' do
@@ -606,13 +620,15 @@ module Torb
     end
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
-      sleep 0.5
+      conn.broadcast_with_ack :pause
       render_report_csv($event_cache[event_id.to_i][:reports].compact)
+      conn.broadcast :resume
     end
 
     get '/admin/api/reports/sales', admin_login_required: true do
-      sleep 0.5
+      conn.broadcast_with_ack :pause
       render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+))
+      conn.broadcast :resume
     end
 
     get '/redis/:key' do |key|
