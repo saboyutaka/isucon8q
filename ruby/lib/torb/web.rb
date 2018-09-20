@@ -379,21 +379,17 @@ module Torb
       login_name = body_params['login_name']
       password   = body_params['password']
 
-      db.query('BEGIN')
       begin
         duplicated = db.xquery('SELECT * FROM users WHERE login_name = ?', login_name).first
         if duplicated
-          db.query('ROLLBACK')
           halt_with_error 409, 'duplicated'
         end
 
         db.xquery('INSERT INTO users (login_name, pass_hash, nickname) VALUES (?, SHA2(?, 256), ?)', login_name, password, nickname)
         user_id = db.last_id
-        db.query('COMMIT')
         conn.broadcast_with_ack [:user, { 'id' => user_id, 'login_name' => login_name, 'password' => password, 'nickname' => nickname }]
       rescue => e
         warn "rollback by: #{e}"
-        db.query('ROLLBACK')
         halt_with_error
       end
 
@@ -553,11 +549,9 @@ module Torb
       public = body_params['public'] || false
       price  = body_params['price']
 
-      db.query('BEGIN')
       begin
         db.xquery('INSERT INTO events (title, public_fg, closed_fg, price) VALUES (?, ?, 0, ?)', title, public, price)
         event_id = db.last_id
-        db.query('COMMIT')
         redis.multi do
           redis.sadd "sheets_#{event_id}_S", (1..50).to_a
           redis.sadd "sheets_#{event_id}_A", (51..200).to_a
@@ -566,7 +560,6 @@ module Torb
         end
         conn.broadcast_with_ack [:event, { 'id' => event_id, 'title' => title, 'public' => public, 'closed' => false, 'price' => price }]
       rescue => e
-        db.query('ROLLBACK')
       end
       event = get_event(event_id)
       Oj.to_json event
@@ -594,13 +587,10 @@ module Torb
         halt_with_error 400, 'cannot_close_public_event'
       end
 
-      db.query('BEGIN')
       begin
         db.xquery('UPDATE events SET public_fg = ?, closed_fg = ? WHERE id = ?', public, closed, event['id'])
-        db.query('COMMIT')
         conn.broadcast_with_ack [:event, { 'id' => event_id, 'public' => public, 'closed' => closed }]
       rescue
-        db.query('ROLLBACK')
       end
 
       event = get_event(event_id)
