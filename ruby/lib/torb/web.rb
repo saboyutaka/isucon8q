@@ -228,7 +228,6 @@ end
 
 Thread.new { init_redis_reservation; init_cache }.join
 
-ENV['RACK_ENV']='production'
 module Torb
   class Web < Sinatra::Base
     configure do
@@ -236,10 +235,10 @@ module Torb
       # register Sinatra::Reloader
       # require 'rack-lineprof'
       # use Rack::Lineprof, profile: 'web.rb'
-      enable :logging
-      file = File.new("#{settings.root}/sinatra.log", 'a+')
-      file.sync = true
-      use Rack::CommonLogger, file
+      # enable :logging
+      # file = File.new("#{settings.root}/sinatra.log", 'a+')
+      # file.sync = true
+      # use Rack::CommonLogger, file
     end
 
     set :root, File.expand_path('../..', __dir__)
