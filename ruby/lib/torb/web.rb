@@ -115,7 +115,7 @@ $conn = Connection.new do |message|
       cache[:reports][reservation_id] = [reservation_id,eid,sid,num,price,user_id,Time.at(time).iso8601,'']
     else
       uc[:total] -= price
-      cache[:reserved_users][rank].delete sid if cache[:reserved_users][rank][sid] == user_id
+      cache[:reserved_users][rank].delete sid
       counts[user_id] = (counts[user_id] || 0) - 1
       sheet = cache[:detail][rank][num - 1] = { 'num' => num }
       cache[:reports][reservation_id][7] = Time.at(time).iso8601
@@ -514,8 +514,8 @@ module Torb
       time = Time.now
       db.xquery('UPDATE reservations SET canceled_at = ? WHERE id = ? AND canceled_at IS NULL', time.utc.strftime('%F %T.%6N'), reservation['id'])
       if db.affected_rows == 1
-        redis.sadd "sheets_#{event['id']}_#{rank}", sheet_id
         conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, reservation['user_id'], reservation['id'], time.to_i, false]]
+        redis.sadd "sheets_#{event['id']}_#{rank}", sheet_id
       end
 
       status 204
