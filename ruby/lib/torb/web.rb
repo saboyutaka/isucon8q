@@ -607,11 +607,11 @@ module Torb
     end
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
-      render_report_csv($event_cache[event_id.to_i][:reports].compact, reports)
+      render_report_csv($event_cache[event_id.to_i][:reports].compact)
     end
 
     get '/admin/api/reports/sales', admin_login_required: true do
-      render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+), reports)
+      render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+))
     end
 
     get '/redis/:key' do |key|
