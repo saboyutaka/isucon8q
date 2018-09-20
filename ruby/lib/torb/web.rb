@@ -64,17 +64,17 @@ def logs_add logs, id, time
 end
 
 CACHE_JSON_PATH = './initialize_data.json'
+$cache_data = Oj.load File.read(CACHE_JSON_PATH) if File.exist? CACHE_JSON_PATH
 def load_cache
-  return false unless File.exist? CACHE_JSON_PATH
-  data = Oj.load File.read(CACHE_JSON_PATH)
-  $user_cache = data[:user_cache]
-  $event_cache = data[:event_cache]
+  return false unless $cache_data
+  $user_cache = $cache_data[:user_cache]
+  $event_cache = $cache_data[:event_cache]
   true
 end
 
 def save_cache
-  data = { user_cache: $user_cache, event_cache: $event_cache }
-  File.write CACHE_JSON_PATH, Oj.dump(data)
+  $cache_data = { user_cache: $user_cache, event_cache: $event_cache }
+  File.write CACHE_JSON_PATH, Oj.dump($cache_data)
 end
 
 def wait_while_paused
@@ -122,10 +122,12 @@ $conn = Connection.new do |message|
     end
     cache[:reports][reservation_id][8] = cache[:reports][reservation_id][0,8].join(',')+"\n"
   when :init
+    $paused = true
     if data || !load_cache
       init_cache
       save_cache
     end
+    $paused = false
   when :pause
     $paused = true
   when :resume
@@ -386,7 +388,7 @@ module Torb
 
     get '/initialize' do # /initialize?generate=true to re-generate initialize_data.json
       system "../../db/init.sh"
-      conn.broadcast_with_ack [:init, !!params[:generate]], timeout: 9
+      conn.broadcast_with_ack [:init, !!params[:generate]], timeout: 6
       init_redis_reservation
       status 204
     end
