@@ -362,7 +362,7 @@ module Torb
     end
 
     get '/initialize' do # /initialize?generate=true to re-generate initialize_data.json
-      system "../db/init.sh"
+      system "../../db/init.sh"
       conn.broadcast_with_ack [:init, !!params[:generate]], timeout: 9
       init_redis_reservation
       status 204
