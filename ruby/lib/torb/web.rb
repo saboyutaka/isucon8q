@@ -84,6 +84,7 @@ rescue => e
 end
 
 $conn = Connection.new do |message|
+  begin
   type, data = message
   case type
   when :event
@@ -123,6 +124,9 @@ $conn = Connection.new do |message|
     end
   end
   :ok
+  rescue=>e
+    [e.message, e.backtrace]
+  end
 end
 
 def conn
