@@ -68,12 +68,13 @@ $cache_data = Oj.load File.read(CACHE_JSON_PATH) if File.exist? CACHE_JSON_PATH
 def load_cache
   return false unless $cache_data
   $user_cache = $cache_data[:user_cache]
+  $user_by_name_cache = $cache_data[:user_by_name_cache]
   $event_cache = $cache_data[:event_cache]
   true
 end
 
 def save_cache
-  $cache_data = { user_cache: $user_cache, event_cache: $event_cache }
+  $cache_data = { user_cache: $user_cache, user_by_name_cache: $user_by_name_cache, event_cache: $event_cache }
   File.write CACHE_JSON_PATH, Oj.dump($cache_data)
 end
 
@@ -95,39 +96,45 @@ $conn = Connection.new do |message|
     end
   when :user
     $user_cache[data['id']] = data.merge total: 0, reserve_logs: [], event_logs: []
+    $user_by_name_cache[data['login_name']] = data
   when :reserve
     eid, sid, user_id, reservation_id, time, reserved = data
     rank = rank_by_sheet_id sid
     cache = $event_cache[eid]
     num = sid - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
     uc = $user_cache[user_id]
-    logs_add uc[:reserve_logs], reservation_id, time
+    logs_add uc[:reserve_logs], reservation_id, [time, eid]
     logs_add uc[:event_logs], eid, time
     price = cache[:data]['price'] + SHEET_PRICES[rank]
     counts = cache[:user_reserve_counts][rank]
     if reserved
       uc[:total] += price
-      cache[:reserved_users][rank][sid] = user_id
+      cache[:reserved_users][rank][sid] = [user_id, reservation_id]
       counts[user_id] = (counts[user_id] || 0) + 1
       sheet = cache[:detail][rank][num - 1]
       sheet['reserved_at'] = time
       sheet['reserved'] = true
-      cache[:reports][reservation_id] = [reservation_id,eid,rank,num,price,user_id,Time.at(time).utc.iso8601,'']
+      cache[:reports][reservation_id] = [reservation_id,eid,rank,num,price,user_id,Time.at(time).utc.iso8601,'',time, nil]
     else
       uc[:total] -= price
       cache[:reserved_users][rank].delete sid
       counts[user_id] = (counts[user_id] || 0) - 1
       sheet = cache[:detail][rank][num - 1] = { 'num' => num }
       cache[:reports][reservation_id][7] = Time.at(time).utc.iso8601
+      cache[:reports][reservation_id][9] = time
     end
-    cache[:reports][reservation_id][8] = cache[:reports][reservation_id][0,8].join(',')+"\n"
+    cache[:reports][reservation_id][10] = cache[:reports][reservation_id][0,8].join(',')+"\n"
   when :init
     # $paused = true
+    t = Time.now
+    loaded = false
     if data || !load_cache
+      loaded = true
       init_cache
       save_cache
     end
     # $paused = false
+    next [:ok, Time.now - t, loaded]
   when :pause
     $paused = true
   when :resume
@@ -164,9 +171,11 @@ end
 def init_cache
   p :start_cache_initialize
   $user_cache = {}
+  $user_by_name_cache = {}
   $event_cache = {}
   db.query('SELECT users.* FROM users').each do |user|
     $user_cache[user['id']] = user.merge total: 0, reserve_logs: [], event_logs: []
+    $user_by_name_cache[user['login_name']] = user
   end
   db.query('SELECT * FROM events').each do |event|
     event_id = event['id']
@@ -177,12 +186,12 @@ def init_cache
     user_reserve_counts = event_cache[:user_reserve_counts]
     detail_cache = event_cache[:detail]
     reports_cache = event_cache[:reports]
-    db.xquery('SELECT sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event_id).each do |res|
+    db.xquery('SELECT id, sheet_id, user_id, reserved_at FROM reservations WHERE canceled_at IS NULL and event_id = ?', event_id).each do |res|
       sheet_id = res['sheet_id']
       user_id = res['user_id']
       reserved_at = res['reserved_at'].to_i
       rank = rank_by_sheet_id sheet_id
-      reservation_cache[rank][sheet_id] = user_id
+      reservation_cache[rank][sheet_id] = user_id, res['id']
       counts = user_reserve_counts[rank]
       counts[user_id] = (counts[user_id] || 0) + 1
       num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
@@ -192,15 +201,15 @@ def init_cache
     db.xquery("SELECT id, user_id, sheet_id, reserved_at, canceled_at FROM reservations WHERE event_id = #{event_id.to_s}", as: :array).each do |id, user_id, sheet_id, reserved_at, canceled_at|
       uc = $user_cache[user_id]
       time = [reserved_at, canceled_at].compact.map(&:to_i).max
-      logs_add uc[:reserve_logs], id, time
+      logs_add uc[:reserve_logs], id, [time, event_id]
       logs_add uc[:event_logs], event_id, time
 
       rank = rank_by_sheet_id sheet_id
       sheet_num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
       reports_cache[id] = [id,event_id,rank,sheet_num,
         event['price'] + SHEET_PRICES[rank],user_id,
-        reserved_at.iso8601,canceled_at&.iso8601 || '']
-      reports_cache[id] << reports_cache[id].join(',')+"\n"
+        reserved_at.iso8601,canceled_at&.iso8601 || '',reserved_at.to_i, canceled_at&.to_i]
+      reports_cache[id] << reports_cache[id][0,8].join(',')+"\n"
     end
   end
   p :end_cache_initialize
@@ -246,7 +255,7 @@ module Torb
 
     set :login_required, ->(value) do
       condition do
-        if value && !get_login_user
+        if value && !get_login_user_id
           halt_with_error 401, 'login_required'
         end
       end
@@ -264,10 +273,6 @@ module Torb
     #   wait_while_paused
     # end
 
-    before '/api/*|/admin/api/*' do
-      content_type :json
-    end
-
     helpers do
       def get_events(where = nil)
         where ||= ->(e) { e['public'] }
@@ -275,14 +280,6 @@ module Torb
         event_ids.map do |event_id|
           get_event_data_with_remain_sheets(event_id)
         end
-      end
-
-      def get_only_event_data(event_id)
-        $event_cache[event_id.to_i]&.[] :data
-        # event = db.xquery('SELECT id, title, public_fg as public, closed_fg as closed, price FROM events WHERE id = ?', event_id).first
-        # return unless event
-        #
-        # event
       end
 
       def get_event_data_with_remain_sheets(event_id)
@@ -305,7 +302,6 @@ module Torb
       def get_event(event_id, login_user_id = nil)
         event_id = event_id.to_i
         cache = $event_cache[event_id]
-        # event = db.xquery('SELECT * FROM events WHERE id = ?', event_id).first
         return unless cache
         event = cache[:data].dup
         reservations = cache[:reserved_users]
@@ -326,7 +322,7 @@ module Torb
           id_offset = {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
           reserved_user_set = reservations[rank]
           event_sheets[rank]['detail'] = cache[:detail][rank].map do |sheet|
-            next sheet unless sheet['reserved'] && reserved_user_set[sheet['num']+id_offset] == login_user_id
+            next sheet unless sheet['reserved'] && reserved_user_set[sheet['num']+id_offset].first == login_user_id
             sheet.merge 'mine' => true
           end
         end
@@ -339,6 +335,10 @@ module Torb
         sanitized.delete('public')
         sanitized.delete('closed')
         sanitized
+      end
+
+      def get_login_user_id
+        session[:user_id]&.to_i
       end
 
       def get_login_user
@@ -368,8 +368,8 @@ module Torb
       def render_report_csv(reports)
         keys = %i[reservation_id event_id rank num price user_id sold_at canceled_at]
 
-        body = keys.join(',') + "\n" + reports.sort_by { |report| report[6] }.map do |report|
-          report[8]
+        body = keys.join(',') + "\n" + reports.sort_by { |report| report[8] }.map do |report|
+          report[10]
         end.join
 
         headers({
@@ -394,19 +394,19 @@ module Torb
     end
 
     post '/api/users' do
+      response['Content-Type'] = 'application/json'
       nickname   = body_params['nickname']
       login_name = body_params['login_name']
       password   = body_params['password']
 
       begin
-        duplicated = db.xquery('SELECT * FROM users WHERE login_name = ?', login_name).first
-        if duplicated
+        if $user_by_name_cache[login_name]
           halt_with_error 409, 'duplicated'
         end
-
-        db.xquery('INSERT INTO users (login_name, pass_hash, nickname) VALUES (?, SHA2(?, 256), ?)', login_name, password, nickname)
+        pass_hash = Digest::SHA256.hexdigest(password)
+        db.xquery('INSERT INTO users (login_name, pass_hash, nickname) VALUES (?, ?, ?)', login_name, pass_hash, nickname)
         user_id = db.last_id
-        conn.broadcast_with_ack [:user, { 'id' => user_id, 'login_name' => login_name, 'password' => password, 'nickname' => nickname }]
+        conn.broadcast_with_ack [:user, { 'id' => user_id, 'login_name' => login_name, 'pass_hash' => pass_hash, 'nickname' => nickname }]
       rescue => e
         halt_with_error
       end
@@ -416,69 +416,64 @@ module Torb
     end
 
     get '/api/users/:id', login_required: true do |user_id|
+      response['Content-Type'] = 'application/json'
+      user_id = user_id.to_i
       user = get_login_user
-      if user_id.to_i != user['id']
+      if user_id != user['id']
         halt_with_error 403, 'forbidden'
       end
-      uc = $user_cache[user['id']]
-      row_ids = uc[:reserve_logs].map(&:first)
-      rows = row_ids.empty? ? [] : db.xquery('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id WHERE r.id in (?) ORDER BY IFNULL(r.canceled_at, r.reserved_at) DESC LIMIT 5', row_ids)
-      recent_reservations = rows.map do |row|
-        event = get_only_event_data(row['event_id'])
-        price = event['price'] + SHEET_PRICES[row['sheet_rank']]
+      uc = $user_cache[user_id]
 
+      recent_reservations = uc[:reserve_logs].map do |rid, (_, eid)|
+        cache = $event_cache[eid]
+        _, _, rank, sheet_num, price, _, _, r_at, c_at = cache[:reports][rid]
         {
-          id:          row['id'],
-          event:       event,
-          sheet_rank:  row['sheet_rank'],
-          sheet_num:   row['sheet_num'],
+          id:          rid,
+          event:       cache[:data],
+          sheet_rank:  rank,
+          sheet_num:   sheet_num,
           price:       price,
-          reserved_at: row['reserved_at'].to_i,
-          canceled_at: row['canceled_at']&.to_i,
+          reserved_at: r_at,
+          canceled_at: c_at
         }
       end
 
       user['recent_reservations'] = recent_reservations
       user['total_price'] = uc[:total]
 
-      row_ids = uc[:event_logs].map(&:first).reverse
-      p uc
-      recent_events = row_ids.map do |id|
+      user['recent_events'] = uc[:event_logs].map(&:first).reverse_each.map do |id|
         get_event_data_with_remain_sheets id
       end
-      user['recent_events'] = recent_events
 
       Oj.to_json user
     end
 
-
     post '/api/actions/login' do
+      response['Content-Type'] = 'application/json'
       login_name = body_params['login_name']
-      password   = body_params['password']
-
-      user      = db.xquery('SELECT * FROM users WHERE login_name = ?', login_name).first
-      pass_hash = db.xquery('SELECT SHA2(?, 256) AS pass_hash', password).first['pass_hash']
-      halt_with_error 401, 'authentication_failed' if user.nil? || pass_hash != user['pass_hash']
+      password = body_params['password']
+      user = $user_by_name_cache[login_name]
+      halt_with_error 401, 'authentication_failed' if user.nil? || user['pass_hash'] != Digest::SHA256.hexdigest(password)
 
       session['user_id'] = user['id']
-
-      user = get_login_user
-      Oj.to_json user
+      Oj.to_json user.slice('id', 'nickname')
     end
 
     post '/api/actions/logout', login_required: true do
+      response['Content-Type'] = 'application/json'
       session.delete('user_id')
       status 204
     end
 
     get '/api/events' do
+      response['Content-Type'] = 'application/json'
       events = get_events.map(&method(:sanitize_event))
       Oj.to_json events
     end
 
     get '/api/events/:id' do |event_id|
-      user = get_login_user || {}
-      event = get_event(event_id, user['id'])
+      response['Content-Type'] = 'application/json'
+      event = get_event(event_id, get_login_user_id)
       halt_with_error 404, 'not_found' if event.nil? || !event['public']
 
       event = sanitize_event(event)
@@ -486,10 +481,11 @@ module Torb
     end
 
     post '/api/events/:id/actions/reserve', login_required: true do |event_id|
+      response['Content-Type'] = 'application/json'
+      event_id = event_id.to_i
       rank = body_params['sheet_rank']
-
-      user  = get_login_user
-      event = get_event(event_id, user['id'])
+      user_id  = get_login_user_id
+      event = $event_cache[event_id]&.[] :data
       halt_with_error 404, 'invalid_event' unless event && event['public']
       halt_with_error 400, 'invalid_rank' unless validate_rank(rank)
 
@@ -497,36 +493,30 @@ module Torb
       halt_with_error 409, 'sold_out' unless sheet_id
       sheet_num = sheet_id - {'S'=>0,'A'=>50,'B'=>200,'C'=>500}[rank]
       time = Time.now
-      db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event['id'], sheet_id, user['id'], time.utc.strftime('%F %T.%6N'))
+      db.xquery('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', event_id, sheet_id, user_id, time.utc.strftime('%F %T.%6N'))
       reservation_id = db.last_id
-      conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, user['id'], reservation_id, time.to_i, true]]
+      conn.broadcast_with_ack [:reserve, [event_id, sheet_id, user_id, reservation_id, time.to_i, true]]
       status 202
       Oj.to_json({ id: reservation_id, sheet_rank: rank, sheet_num: sheet_num })
     end
 
     delete '/api/events/:id/sheets/:rank/:num/reservation', login_required: true do |event_id, rank, num|
+      response['Content-Type'] = 'application/json'
       event_id = event_id.to_i
-      user  = get_login_user
-      event = get_event(event_id, user['id'])
+      event = $event_cache[event_id]&.[] :data
       halt_with_error 404, 'invalid_event' unless event && event['public']
       halt_with_error 404, 'invalid_rank'  unless validate_rank(rank)
       sheet_offset = {'S' => 0, 'A' => 50, 'B' => 200, 'C' => 500 }[rank]
       sheet_id = sheet_offset + num.to_i
       halt_with_error 404, 'invalid_sheet' if sheet_id <= 0 || sheet_id > 1000 || rank_by_sheet_id(sheet_id) != rank
-      reservation = db.xquery('select id, user_id from reservations WHERE event_id = ? AND sheet_id = ? AND canceled_at IS NULL', event_id, sheet_id).first
-      unless reservation
-        halt_with_error 400, 'not_reserved'
-      end
-      if reservation['user_id'] != user['id']
-        halt_with_error 403, 'not_permitted'
-      end
+      reserved_user_id, reservation_id = $event_cache[event_id][:reserved_users][rank][sheet_id]
+      halt_with_error 400, 'not_reserved' unless reserved_user_id
+      halt_with_error 403, 'not_permitted' unless reserved_user_id == get_login_user_id
 
       time = Time.now
-      db.xquery('UPDATE reservations SET canceled_at = ? WHERE id = ? AND canceled_at IS NULL', time.utc.strftime('%F %T.%6N'), reservation['id'])
-      if db.affected_rows == 1
-        conn.broadcast_with_ack [:reserve, [event['id'], sheet_id, reservation['user_id'], reservation['id'], time.to_i, false]]
-        redis.sadd "sheets_#{event['id']}_#{rank}", sheet_id
-      end
+      db.xquery('UPDATE reservations SET canceled_at = ? WHERE event_id = ? AND sheet_id = ? AND user_id = ?', time.utc.strftime('%F %T.%6N'), event_id, sheet_id, reserved_user_id)
+      conn.broadcast_with_ack [:reserve, [event_id, sheet_id, reserved_user_id, reservation_id, time.to_i, false]]
+      redis.sadd "sheets_#{event_id}_#{rank}", sheet_id
 
       status 204
     end
@@ -539,11 +529,12 @@ module Torb
     end
 
     post '/admin/api/actions/login' do
+      response['Content-Type'] = 'application/json'
       login_name = body_params['login_name']
       password   = body_params['password']
 
       administrator = db.xquery('SELECT * FROM administrators WHERE login_name = ?', login_name).first
-      pass_hash     = db.xquery('SELECT SHA2(?, 256) AS pass_hash', password).first['pass_hash']
+      pass_hash     = Digest::SHA256.hexdigest password
       halt_with_error 401, 'authentication_failed' if administrator.nil? || pass_hash != administrator['pass_hash']
 
       session['administrator_id'] = administrator['id']
@@ -553,50 +544,50 @@ module Torb
     end
 
     post '/admin/api/actions/logout', admin_login_required: true do
+      response['Content-Type'] = 'application/json'
       session.delete('administrator_id')
       status 204
     end
 
     get '/admin/api/events', admin_login_required: true do
+      response['Content-Type'] = 'application/json'
       events = get_events(->(_) { true })
       Oj.to_json events
     end
 
     post '/admin/api/events', admin_login_required: true do
+      response['Content-Type'] = 'application/json'
       title  = body_params['title']
       public = body_params['public'] || false
       price  = body_params['price']
 
-      begin
-        db.xquery('INSERT INTO events (title, public_fg, closed_fg, price) VALUES (?, ?, 0, ?)', title, public, price)
-        event_id = db.last_id
-        redis.multi do
-          redis.sadd "sheets_#{event_id}_S", (1..50).to_a
-          redis.sadd "sheets_#{event_id}_A", (51..200).to_a
-          redis.sadd "sheets_#{event_id}_B", (201..500).to_a
-          redis.sadd "sheets_#{event_id}_C", (501..1000).to_a
-        end
-        conn.broadcast_with_ack [:event, { 'id' => event_id, 'title' => title, 'public' => public, 'closed' => false, 'price' => price }]
-      rescue => e
-      end
+      db.xquery('INSERT INTO events (title, public_fg, closed_fg, price) VALUES (?, ?, 0, ?)', title, public, price)
+      event_id = db.last_id
+      redis.sadd "sheets_#{event_id}_S", (1..50).to_a
+      redis.sadd "sheets_#{event_id}_A", (51..200).to_a
+      redis.sadd "sheets_#{event_id}_B", (201..500).to_a
+      redis.sadd "sheets_#{event_id}_C", (501..1000).to_a
+      conn.broadcast_with_ack [:event, { 'id' => event_id, 'title' => title, 'public' => public, 'closed' => false, 'price' => price }]
+
       event = get_event(event_id)
       Oj.to_json event
     end
 
     get '/admin/api/events/:id', admin_login_required: true do |event_id|
+      response['Content-Type'] = 'application/json'
       event = get_event(event_id)
       halt_with_error 404, 'not_found' unless event
-
       Oj.to_json event
     end
 
     post '/admin/api/events/:id/actions/edit', admin_login_required: true do |event_id|
+      response['Content-Type'] = 'application/json'
       event_id = event_id.to_i
       public = body_params['public'] || false
       closed = body_params['closed'] || false
       public = false if closed
 
-      event = get_event(event_id)
+      event = $event_cache[event_id]&.[] :data
       halt_with_error 404, 'not_found' unless event
 
       if event['closed']
@@ -605,17 +596,15 @@ module Torb
         halt_with_error 400, 'cannot_close_public_event'
       end
 
-      begin
-        db.xquery('UPDATE events SET public_fg = ?, closed_fg = ? WHERE id = ?', public, closed, event['id'])
-        conn.broadcast_with_ack [:event, { 'id' => event_id, 'public' => public, 'closed' => closed }]
-      rescue
-      end
+      db.xquery('UPDATE events SET public_fg = ?, closed_fg = ? WHERE id = ?', public, closed, event_id)
+      conn.broadcast_with_ack [:event, { 'id' => event_id, 'public' => public, 'closed' => closed }]
 
       event = get_event(event_id)
       Oj.to_json event
     end
 
     get '/admin/api/reports/events/:id/sales', admin_login_required: true do |event_id|
+      response['Content-Type'] = 'application/json'
       # conn.broadcast_with_ack :pause
       body = render_report_csv($event_cache[event_id.to_i][:reports].compact)
       # conn.broadcast :resume
@@ -623,6 +612,7 @@ module Torb
     end
 
     get '/admin/api/reports/sales', admin_login_required: true do
+      response['Content-Type'] = 'application/json'
       # conn.broadcast_with_ack :pause
       body = render_report_csv($event_cache.values.map{|a|a[:reports].compact}.inject(:+))
       # conn.broadcast :resume
