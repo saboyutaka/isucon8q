@@ -426,7 +426,7 @@ module Torb
 
       recent_reservations = uc[:reserve_logs].map do |rid, (_, eid)|
         cache = $event_cache[eid]
-        _, _, rank, sheet_num, price, _, _, r_at, c_at = cache[:reports][rid]
+        _, _, rank, sheet_num, price, _, _, _, r_at, c_at = cache[:reports][rid]
         {
           id:          rid,
           event:       cache[:data],
