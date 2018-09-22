@@ -277,7 +277,7 @@ module Torb
       def get_events(where = nil)
         where ||= ->(e) { e['public'] }
         event_ids = $event_cache.values.map { |a| a[:data] }.select(&where).map { |e| e['id'] }
-        event_ids.map do |event_id|
+        event_ids.sort.map do |event_id|
           get_event_data_with_remain_sheets(event_id)
         end
       end
